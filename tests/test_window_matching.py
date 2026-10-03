@@ -12,8 +12,9 @@ from dataclasses import dataclass
 
 import psutil
 import pytest
+import win32gui
+import win32process
 
-import Macros
 from Macros import LogWindowProfile, MinecraftProfile, RustProfile
 
 HWND = 0x1234
@@ -41,10 +42,10 @@ def foreground(monkeypatch: pytest.MonkeyPatch) -> Foreground:
             assert window.exe is not None
             return window.exe
 
-    monkeypatch.setattr(Macros.win32gui, "GetForegroundWindow", lambda: HWND)
-    monkeypatch.setattr(Macros.win32gui, "GetWindowText", lambda _h: window.title)
-    monkeypatch.setattr(Macros.win32process, "GetWindowThreadProcessId", lambda _h: (1, window.pid))
-    monkeypatch.setattr(Macros.psutil, "Process", FakeProcess)
+    monkeypatch.setattr(win32gui, "GetForegroundWindow", lambda: HWND)
+    monkeypatch.setattr(win32gui, "GetWindowText", lambda _h: window.title)
+    monkeypatch.setattr(win32process, "GetWindowThreadProcessId", lambda _h: (1, window.pid))
+    monkeypatch.setattr(psutil, "Process", FakeProcess)
     return window
 
 

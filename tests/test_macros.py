@@ -69,7 +69,7 @@ class FakeProc:
 def processes(monkeypatch: pytest.MonkeyPatch) -> list[FakeProc]:
     """The process table psutil reports; tests append to it."""
     table: list[FakeProc] = []
-    monkeypatch.setattr(Macros.psutil, "process_iter", lambda _attrs: iter(table))
+    monkeypatch.setattr(psutil, "process_iter", lambda _attrs: iter(table))
     monkeypatch.setattr(Macros, "_server_cache", {"value": None, "at": float("-inf")})
     return table
 
@@ -117,13 +117,13 @@ class KeysProfile(Profile):
 
     @property
     def hotkeys(self) -> dict[str, Any]:
-        return {k: print for k in self._keys}
+        return dict.fromkeys(self._keys, print)
 
 
-def test_collect_all_hotkeys_groups_profiles_by_key() -> None:
+def test_collect_all_hotkeys_groups_profiles_by_key(monkeypatch: pytest.MonkeyPatch) -> None:
     a, b = KeysProfile("A", ["f1", "f2"]), KeysProfile("B", ["f2"])
+    monkeypatch.setattr(App, "PROFILES", [a, b])
     app = App.__new__(App)  # skip __init__: it opens the Tk log window
-    app.PROFILES = [a, b]
     assert app._collect_all_hotkeys() == {"f1": [a], "f2": [a, b]}
 
 

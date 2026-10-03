@@ -6,7 +6,7 @@ are all OS-level, so each is replaced with an in-memory fake.
 
 from __future__ import annotations
 
-import sys
+import time
 from types import SimpleNamespace
 from typing import Any, Self
 
@@ -21,10 +21,7 @@ CF_PRIVATE = 0x0200  # an app-private format that cannot be put back
 
 
 class FakeClipboard:
-    """Just enough of win32clipboard for _send_chat.
-
-    Method names mirror the pywin32 API, hence the CamelCase.
-    """
+    """Just enough of win32clipboard for _send_chat."""
 
     CF_UNICODETEXT = CF_UNICODETEXT
     error = OSError  # stands in for pywintypes.error
@@ -33,27 +30,35 @@ class FakeClipboard:
         self.contents = dict(contents)
         self.unsettable: set[int] = set()
 
-    def OpenClipboard(self) -> None:
+    def open_clipboard(self) -> None:
         pass
 
-    def CloseClipboard(self) -> None:
+    def close_clipboard(self) -> None:
         pass
 
-    def EmptyClipboard(self) -> None:
+    def empty_clipboard(self) -> None:
         self.contents.clear()
 
-    def EnumClipboardFormats(self, fmt: int) -> int:
+    def enum_clipboard_formats(self, fmt: int) -> int:
         formats = list(self.contents)
         index = 0 if fmt == 0 else formats.index(fmt) + 1
         return formats[index] if index < len(formats) else 0
 
-    def GetClipboardData(self, fmt: int) -> Any:
+    def get_clipboard_data(self, fmt: int) -> Any:
         return self.contents[fmt]
 
-    def SetClipboardData(self, fmt: int, data: Any) -> None:
+    def set_clipboard_data(self, fmt: int, data: Any) -> None:
         if fmt in self.unsettable:
             raise TypeError(f"format {fmt} cannot be set")
         self.contents[fmt] = data
+
+    # The pywin32 names _send_chat calls.
+    OpenClipboard = open_clipboard
+    CloseClipboard = close_clipboard
+    EmptyClipboard = empty_clipboard
+    EnumClipboardFormats = enum_clipboard_formats
+    GetClipboardData = get_clipboard_data
+    SetClipboardData = set_clipboard_data
 
 
 class NoHook:
@@ -80,10 +85,10 @@ class Log:
 @pytest.fixture
 def clipboard(monkeypatch: pytest.MonkeyPatch) -> FakeClipboard:
     fake = FakeClipboard({CF_UNICODETEXT: "the user's own text"})
-    monkeypatch.setitem(sys.modules, "win32clipboard", fake)
+    monkeypatch.setattr(Macros, "win32clipboard", fake)
     monkeypatch.setattr(Macros, "KeyboardSuppressor", NoHook)
     monkeypatch.setattr(Macros, "get_minecraft_server", lambda: None)
-    monkeypatch.setattr(Macros.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
     return fake
 
 

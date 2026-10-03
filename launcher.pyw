@@ -12,21 +12,24 @@ launcher holds the Popen handle for everything it starts, so a PID is only ever
 considered "alive" if that specific child is still running -- no PID reuse races.
 """
 
+import contextlib
+import ctypes
 import json
 import subprocess
 import sys
-from pathlib import Path
-
 import tkinter as tk
 import tkinter.font as tkfont
-import tkinter.messagebox as messagebox
-from tkinter import filedialog, ttk
+import traceback
+from collections.abc import Iterator
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
+from typing import Any
 
 # Settings file location
 SETTINGS_FILE = Path.home() / ".python_launcher_settings.json"
 
 # Default settings
-DEFAULT_SETTINGS = {
+DEFAULT_SETTINGS: dict[str, Any] = {
     "last_folder": str(Path.cwd()),
     "last_file": "",
     "launch_mode": "console",
@@ -58,7 +61,7 @@ RED_HOVER = "#d9614f"
 POLL_MS = 1000  # how often running processes are re-checked
 
 
-def resolve_console_python():
+def resolve_console_python() -> str:
     """Return an interpreter that can own a console window.
 
     Because this file is a .pyw, sys.executable is normally pythonw.exe -- a
@@ -80,7 +83,7 @@ def resolve_console_python():
 PYTHON_EXE = resolve_console_python()
 
 
-def make_window_icon(master=None):
+def make_window_icon(master: tk.Misc | None = None) -> tk.PhotoImage:
     """Draw the launcher's icon: an accent play-triangle on a dark rounded tile.
 
     Pixel art rather than PIL - this file deliberately has no third-party
@@ -115,22 +118,21 @@ def make_window_icon(master=None):
     return icon.zoom(4)
 
 
-def pick_font_family(root):
+def pick_font_family(root: tk.Misc) -> str:
     """Return the nicest UI font family available on this platform."""
     families = set(tkfont.families(root))
     for family in ("Segoe UI", "SF Pro Text", "Helvetica Neue", "Ubuntu", "DejaVu Sans", "Arial"):
         if family in families:
             return family
-    return tkfont.nametofont("TkDefaultFont").cget("family")
+    default: str = tkfont.nametofont("TkDefaultFont").cget("family")
+    return default
 
 
-def apply_dark_titlebar(window):
+def apply_dark_titlebar(window: tk.Tk) -> None:
     """Ask DWM for a dark title bar (Windows 10 1809+); no-op elsewhere."""
     if sys.platform != "win32":
         return
     try:
-        import ctypes
-
         window.update_idletasks()
         hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
         enabled = ctypes.c_int(1)
@@ -146,7 +148,7 @@ def apply_dark_titlebar(window):
 
 
 class PythonLauncherGUI:
-    def __init__(self, root):
+    def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Python File Launcher")
         self.root.geometry("760x620")
@@ -161,14 +163,14 @@ class PythonLauncherGUI:
         self.selected_folder = tk.StringVar(value=self.settings["last_folder"])
         self.launch_mode = tk.StringVar(value=self.settings["launch_mode"])
         self.single_instance = tk.BooleanVar(value=self.settings["single_instance"])
-        self.selected_file = None
+        self.selected_file: str | None = None
 
         # path -> list of Popen handles this launcher started that are still
         # alive. Reaped by poll_processes(). With single-instance off a script
         # can legitimately have several, and all of them stay stoppable.
-        self.processes = {}
+        self.processes: dict[str, list[subprocess.Popen[bytes]]] = {}
         # path -> tree item id, so status cells can be updated in place
-        self.items_by_path = {}
+        self.items_by_path: dict[str, str] = {}
 
         self.font_family = pick_font_family(root)
         self.setup_theme()
@@ -183,12 +185,12 @@ class PythonLauncherGUI:
 
     # --- Settings ----------------------------------------------------------
 
-    def load_settings(self):
+    def load_settings(self) -> dict[str, Any]:
         """Load settings, filling in any keys missing from an older file."""
         settings = DEFAULT_SETTINGS.copy()
         if SETTINGS_FILE.exists():
             try:
-                with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                with SETTINGS_FILE.open(encoding="utf-8") as f:
                     loaded = json.load(f)
                 if isinstance(loaded, dict):
                     settings.update(loaded)
@@ -196,7 +198,7 @@ class PythonLauncherGUI:
                 print(f"Error loading settings: {e}")
         return settings
 
-    def save_settings(self):
+    def save_settings(self) -> None:
         """Save current settings to JSON file."""
         try:
             self.settings["last_folder"] = self.selected_folder.get()
@@ -204,14 +206,14 @@ class PythonLauncherGUI:
             self.settings["launch_mode"] = self.launch_mode.get()
             self.settings["single_instance"] = bool(self.single_instance.get())
 
-            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            with SETTINGS_FILE.open("w", encoding="utf-8") as f:
                 json.dump(self.settings, f, indent=2)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save settings: {e}")
 
     # --- Theme -------------------------------------------------------------
 
-    def setup_theme(self):
+    def setup_theme(self) -> None:
         """Configure a dark ttk theme on top of 'clam'."""
         style = ttk.Style(self.root)
         style.theme_use("clam")
@@ -355,7 +357,7 @@ class PythonLauncherGUI:
 
     # --- UI ----------------------------------------------------------------
 
-    def setup_ui(self):
+    def setup_ui(self) -> None:
         """Setup the user interface."""
         # Folder selection
         folder_frame = ttk.Frame(self.root, padding=(14, 14, 14, 6))
@@ -454,12 +456,12 @@ class PythonLauncherGUI:
         self.status_label = ttk.Label(self.root, text="Ready", style="Status.TLabel", anchor="w")
         self.status_label.pack(fill="x", padx=14, pady=(4, 14))
 
-    def set_status(self, text):
+    def set_status(self, text: str) -> None:
         self.status_label.config(text=text)
 
     # --- Folder scanning ---------------------------------------------------
 
-    def pick_folder(self):
+    def pick_folder(self) -> None:
         """Open folder selection dialog."""
         folder = filedialog.askdirectory(
             initialdir=self.selected_folder.get(),
@@ -469,9 +471,9 @@ class PythonLauncherGUI:
             self.selected_folder.set(folder)
             self.scan_folder()
 
-    def find_scripts(self, folder):
+    def find_scripts(self, folder: Path) -> Iterator[Path]:
         """Yield launchable scripts under folder, skipping noise and this file."""
-        seen = set()
+        seen: set[Path] = set()
         for pattern in SCRIPT_GLOBS:
             for script in folder.rglob(pattern):
                 if SKIP_DIRS.intersection(script.parts):
@@ -482,7 +484,7 @@ class PythonLauncherGUI:
                 seen.add(resolved)
                 yield script
 
-    def scan_folder(self):
+    def scan_folder(self) -> None:
         """Scan the selected folder for Python files."""
         folder = Path(self.selected_folder.get())
 
@@ -495,11 +497,11 @@ class PythonLauncherGUI:
         self.items_by_path.clear()
 
         # Organise files by directory
-        file_dict = {}
+        file_dict: dict[str, list[tuple[str, str]]] = {}
         count = 0
         for script in sorted(self.find_scripts(folder)):
             rel_path = script.relative_to(folder)
-            parent_dir = str(rel_path.parent) if rel_path.parent != Path(".") else "Root"
+            parent_dir = str(rel_path.parent) if rel_path.parent != Path() else "Root"
             file_dict.setdefault(parent_dir, []).append((script.name, str(script)))
             count += 1
 
@@ -531,14 +533,14 @@ class PythonLauncherGUI:
 
     # --- Selection ---------------------------------------------------------
 
-    def current_selection_path(self):
+    def current_selection_path(self) -> str | None:
         selection = self.tree.selection()
         if not selection:
             return None
         values = self.tree.item(selection[0], "values")
-        return values[0] if values and values[0] else None
+        return str(values[0]) if values and values[0] else None
 
-    def on_tree_select(self, event=None):
+    def on_tree_select(self, _event: object = None) -> None:
         """Handle tree view selection."""
         path = self.current_selection_path()
         self.selected_file = path
@@ -554,12 +556,12 @@ class PythonLauncherGUI:
             self.set_status("Select a Python file (not a folder).")
         self.update_buttons()
 
-    def on_tree_double_click(self, event=None):
+    def on_tree_double_click(self, _event: object = None) -> None:
         if self.current_selection_path():
             self.launch_file()
 
-    def update_buttons(self):
-        running = bool(self.processes.get(self.selected_file))
+    def update_buttons(self) -> None:
+        running = bool(self.selected_file and self.processes.get(self.selected_file))
         self.stop_button.config(state="normal" if running else "disabled")
         self.launch_button.config(
             text="Restart Selected File"
@@ -569,7 +571,7 @@ class PythonLauncherGUI:
 
     # --- Process tracking --------------------------------------------------
 
-    def poll_processes(self):
+    def poll_processes(self) -> None:
         """Reap finished children and refresh the Status column."""
         changed = False
         for path, procs in list(self.processes.items()):
@@ -585,7 +587,7 @@ class PythonLauncherGUI:
             self.update_buttons()
         self.root.after(POLL_MS, self.poll_processes)
 
-    def refresh_status_cells(self):
+    def refresh_status_cells(self) -> None:
         """Write the live PID(s) next to every file we currently have running."""
         for path, item in self.items_by_path.items():
             if not self.tree.exists(item):
@@ -600,9 +602,9 @@ class PythonLauncherGUI:
             self.tree.set(item, "status", text)
             self.tree.item(item, tags=("running",) if procs else ())
 
-    def terminate(self, path, timeout=5):
+    def terminate(self, path: str, timeout: float = 5) -> bool:
         """Stop every tracked process for a path, killing any that won't exit."""
-        survivors = []
+        survivors: list[subprocess.Popen[bytes]] = []
         for proc in self.processes.get(path, []):
             try:
                 proc.terminate()
@@ -626,11 +628,11 @@ class PythonLauncherGUI:
         self.update_buttons()
         return not survivors
 
-    def stop_selected(self):
+    def stop_selected(self) -> None:
         """Stop the running process(es) for the selected file."""
         path = self.selected_file
-        procs = self.processes.get(path)
-        if not procs:
+        procs = self.processes.get(path) if path else None
+        if not path or not procs:
             return
         pids = ", ".join(str(p.pid) for p in procs)
         if self.terminate(path):
@@ -638,7 +640,7 @@ class PythonLauncherGUI:
 
     # --- Launching ---------------------------------------------------------
 
-    def launch_file(self):
+    def launch_file(self) -> None:
         """Launch the selected Python file."""
         path = self.selected_file
         if not path:
@@ -692,7 +694,7 @@ class PythonLauncherGUI:
 
     # --- Shutdown ----------------------------------------------------------
 
-    def on_close(self):
+    def on_close(self) -> None:
         """Persist settings and leave launched scripts running."""
         self.save_settings()
         self.root.destroy()
@@ -701,29 +703,25 @@ class PythonLauncherGUI:
 # --- Error reporting --------------------------------------------------------
 
 
-def format_error(exc):
-    import traceback
-
+def format_error(exc: BaseException) -> str:
     return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
 
 
-def report_error(title, details):
+def report_error(title: str, details: str) -> None:
     """Show a dialog -- under pythonw there is no console to print a traceback to."""
     try:
         messagebox.showerror(title, details)
     except Exception:
         # Tk itself is broken; leave something behind that can be read later.
-        try:
+        with contextlib.suppress(OSError):
             SELF_PATH.with_name("launcher-error.log").write_text(details, encoding="utf-8")
-        except Exception:
-            pass
 
 
-def main():
+def main() -> None:
     root = tk.Tk()
     # Without this, exceptions raised inside Tk callbacks go to stderr, which is
     # None under pythonw -- i.e. buttons would silently do nothing.
-    root.report_callback_exception = lambda exc, value, tb: report_error(
+    root.report_callback_exception = lambda _exc_type, value, _tb: report_error(
         "Python File Launcher error", format_error(value)
     )
     PythonLauncherGUI(root)

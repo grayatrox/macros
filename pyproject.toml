@@ -86,6 +86,11 @@ python_version = "3.12"
 strict = true
 warn_unreachable = true
 files = ["Macros.py", "launcher.pyw", "mcvote.py", "tools", "tests"]
+# types-pywin32 leaves some win32clipboard functions unannotated (e.g.
+# CloseClipboard, SetClipboardData). The gap is in the third-party stubs, so
+# exempt calls into that module only; our own code stays fully checked. The
+# top-level win32clipboard stub re-exports from win32.win32clipboard.
+untyped_calls_exclude = ["win32.win32clipboard"]
 
 [[tool.mypy.overrides]]
 # Neither ships type information and typeshed has no stubs for them.

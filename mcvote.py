@@ -18,8 +18,19 @@ Legacy:
                      open_vote_pages() works without it.
 """
 
+from __future__ import annotations
+
+import subprocess
 import time
-import os
+import webbrowser
+from collections.abc import Callable, Iterable
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from selenium.webdriver.firefox.webdriver import WebDriver
+
+Log = Callable[[str], None]
 
 # Configuration
 SERVER_URL = "https://findmcserver.com/server/example?vote=true"  # legacy default
@@ -34,14 +45,18 @@ WAIT_TIMEOUT = 10  # seconds to wait for elements to load
 FIREFOX_PATHS = [
     "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
     "C:\\Program Files (x86)\\Mozilla Firefox\\firefox.exe",
-    os.path.expanduser("~\\AppData\\Local\\Mozilla Firefox\\firefox.exe"),
+    str(Path.home() / "AppData" / "Local" / "Mozilla Firefox" / "firefox.exe"),
 ]
 
 
-def _find_firefox(log=lambda m: None):
+def _ignore(_message: str) -> None:
+    pass
+
+
+def _find_firefox(log: Log = _ignore) -> str | None:
     """Path to the installed Firefox, or None."""
     for path in FIREFOX_PATHS:
-        if os.path.exists(path):
+        if Path(path).exists():
             log(f"✓ Found Firefox at {path}")
             return path
     log("⚠ Could not find Firefox installation")
@@ -53,7 +68,7 @@ def _find_firefox(log=lambda m: None):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def open_vote_pages(server_urls, callback=None):
+def open_vote_pages(server_urls: str | Iterable[str] | None, callback: Log | None = None) -> int:
     """Open the vote URLs as tabs in the user's REAL Firefox.
 
     Uses the user's normal browser (not Selenium), so navigator.webdriver is
@@ -61,20 +76,12 @@ def open_vote_pages(server_urls, callback=None):
     strayamc_vote_autofill.user.js fills the username on each site. Returns the
     number of URLs opened.
     """
-    if isinstance(server_urls, str):
-        urls = [server_urls]
-    else:
-        urls = list(server_urls or [])
-
-    def log(msg):
-        (callback or print)(msg)
+    urls = [server_urls] if isinstance(server_urls, str) else list(server_urls or [])
+    log: Log = callback or print
 
     if not urls:
         log("No vote URLs supplied")
         return 0
-
-    import subprocess
-    import webbrowser
 
     firefox = _find_firefox(log)
     if firefox:
@@ -95,16 +102,16 @@ def open_vote_pages(server_urls, callback=None):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _firefox_user_agent(firefox_binary, log):
+def _firefox_user_agent(firefox_binary: str | None, log: Log) -> str | None:
     """Build the UA string real Firefox sends. Firefox's UA is deterministic from
     its major version and the OS, and freezes the point release, e.g.
       Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0
     """
     version = None
     if firefox_binary:
-        ini = os.path.join(os.path.dirname(firefox_binary), "application.ini")
+        ini = Path(firefox_binary).parent / "application.ini"
         try:
-            with open(ini, encoding="utf-8") as f:
+            with ini.open(encoding="utf-8") as f:
                 for line in f:
                     if line.startswith("Version="):
                         version = line.split("=", 1)[1].strip()
@@ -120,20 +127,20 @@ def _firefox_user_agent(firefox_binary, log):
     return ua
 
 
-def _make_driver(headless, log):
+def _make_driver(headless: bool, log: Log) -> WebDriver | None:
     """Locate geckodriver + Firefox and return a started WebDriver, or None.
 
     The real browser's user agent is used, but this CANNOT hide
     navigator.webdriver (geckodriver forces it True), so Cloudflare Turnstile
     sites will still reject it — use open_vote_pages() for those.
     """
-    from selenium import webdriver
-    from selenium.webdriver.firefox.service import Service
+    from selenium import webdriver  # noqa: PLC0415 - optional legacy-vote extra
+    from selenium.webdriver.firefox.service import Service  # noqa: PLC0415 - ditto
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    geckodriver_path = os.path.join(script_dir, "geckodriver.exe")
+    script_dir = Path(__file__).resolve().parent
+    geckodriver_path = script_dir / "geckodriver.exe"
 
-    if not os.path.exists(geckodriver_path):
+    if not geckodriver_path.exists():
         log(f"Error: geckodriver.exe not found in {script_dir}")
         log("Download it from: https://github.com/mozilla/geckodriver/releases")
         return None
@@ -155,7 +162,7 @@ def _make_driver(headless, log):
         options.set_preference("general.useragent.override", user_agent)
 
     try:
-        service = Service(geckodriver_path)
+        service = Service(str(geckodriver_path))
         log("Starting Firefox...")
         return webdriver.Firefox(service=service, options=options)
     except Exception as e:
@@ -163,16 +170,63 @@ def _make_driver(headless, log):
         return None
 
 
-def vote(callback=None, headless=True, server_urls=None):
+def _cast_vote(driver: WebDriver, url: str, log: Log) -> bool:
+    """Vote on a single findmcserver page in the open browser."""
+    from selenium.webdriver.common.by import By  # noqa: PLC0415 - optional legacy-vote extra
+    from selenium.webdriver.support import expected_conditions  # noqa: PLC0415 - ditto
+    from selenium.webdriver.support.ui import WebDriverWait  # noqa: PLC0415 - ditto
+
+    log(f"Opening {url}...")
+    driver.get(url)
+
+    log("Waiting for page to load...")
+    WebDriverWait(driver, WAIT_TIMEOUT).until(
+        expected_conditions.presence_of_all_elements_located((By.TAG_NAME, "body"))
+    )
+
+    log("Waiting for voting form to render...")
+    time.sleep(5)
+
+    try:
+        username_field = WebDriverWait(driver, 15).until(
+            expected_conditions.visibility_of_element_located(
+                (By.CSS_SELECTOR, "input[placeholder='Minecraft Username']")
+            )
+        )
+        log("Found username field!")
+        log(f"Filling username: {USERNAME}")
+        username_field.clear()
+        username_field.send_keys(USERNAME)
+        log("✓ Username filled in!")
+    except Exception as e:
+        log(f"⚠ Error finding username field: {e}")
+        return False
+
+    try:
+        vote_button = driver.find_element(
+            By.CSS_SELECTOR, "button[aria-label='Vote for the Server']"
+        )
+        log("✓ Vote button found!")
+        log("Clicking vote button...")
+        vote_button.click()
+        log("✓ Vote submitted!")
+        time.sleep(2)
+    except Exception as e:
+        log(f"⚠ Error clicking vote button: {e}")
+        return False
+    return True
+
+
+def vote(
+    callback: Log | None = None,
+    headless: bool = True,
+    server_urls: str | Iterable[str] | None = None,
+) -> int:
     """Full-auto voting for findmcserver.com pages in one browser session.
 
     server_urls defaults to [SERVER_URL] (example); the scraping assumes a
     findmcserver.com layout. Returns the number of pages successfully voted on.
     """
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support import expected_conditions as EC
-    from selenium.webdriver.support.ui import WebDriverWait
-
     if server_urls is None:
         urls = [SERVER_URL]
     elif isinstance(server_urls, str):
@@ -180,11 +234,7 @@ def vote(callback=None, headless=True, server_urls=None):
     else:
         urls = list(server_urls)
 
-    def log(msg):
-        if callback:
-            callback(msg)
-        else:
-            print(msg)
+    log: Log = callback or print
 
     if not urls:
         log("No vote URLs supplied")
@@ -194,54 +244,12 @@ def vote(callback=None, headless=True, server_urls=None):
     if driver is None:
         return 0
 
-    def cast_vote(url):
-        """Vote on a single findmcserver page in the open browser. Returns bool."""
-        log(f"Opening {url}...")
-        driver.get(url)
-
-        log("Waiting for page to load...")
-        WebDriverWait(driver, WAIT_TIMEOUT).until(
-            EC.presence_of_all_elements_located((By.TAG_NAME, "body"))
-        )
-
-        log("Waiting for voting form to render...")
-        time.sleep(5)
-
-        try:
-            username_field = WebDriverWait(driver, 15).until(
-                EC.visibility_of_element_located(
-                    (By.CSS_SELECTOR, "input[placeholder='Minecraft Username']")
-                )
-            )
-            log("Found username field!")
-            log(f"Filling username: {USERNAME}")
-            username_field.clear()
-            username_field.send_keys(USERNAME)
-            log("✓ Username filled in!")
-        except Exception as e:
-            log(f"⚠ Error finding username field: {e}")
-            return False
-
-        try:
-            vote_button = driver.find_element(
-                By.CSS_SELECTOR, "button[aria-label='Vote for the Server']"
-            )
-            log("✓ Vote button found!")
-            log("Clicking vote button...")
-            vote_button.click()
-            log("✓ Vote submitted!")
-            time.sleep(2)
-            return True
-        except Exception as e:
-            log(f"⚠ Error clicking vote button: {e}")
-            return False
-
     successes = 0
     try:
         for i, url in enumerate(urls, 1):
             log(f"── Vote {i}/{len(urls)} ──")
             try:
-                if cast_vote(url):
+                if _cast_vote(driver, url, log):
                     successes += 1
             except Exception as e:
                 # One bad page must not abort the rest of the list.

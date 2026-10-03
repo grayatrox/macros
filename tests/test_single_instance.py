@@ -83,7 +83,7 @@ def test_wait_gives_up_while_still_held(name: str, held: int) -> None:
 # ── restart_process ──────────────────────────────────────────────────────────
 
 
-class Exited(Exception):
+class ExitedError(Exception):
     pass
 
 
@@ -100,9 +100,9 @@ def test_restart_relaunches_with_the_flag_exactly_once(
     monkeypatch.setattr(subprocess, "Popen", lambda cmd: launched.append(list(cmd)))
 
     def fake_exit(code: int) -> None:
-        raise Exited(code)
+        raise ExitedError(code)
 
     monkeypatch.setattr(os, "_exit", fake_exit)
-    with pytest.raises(Exited):
+    with pytest.raises(ExitedError):
         Macros.restart_process()
     assert launched == [[sys.executable, "Macros.py", Macros.RESTART_FLAG]]
