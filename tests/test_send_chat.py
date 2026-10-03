@@ -13,8 +13,8 @@ from typing import Any, Self
 import pyautogui
 import pytest
 
-import Macros
-from Macros import MinecraftProfile
+from macros import app as macros_app
+from macros.app import MinecraftProfile
 
 CF_UNICODETEXT = 13
 CF_PRIVATE = 0x0200  # an app-private format that cannot be put back
@@ -85,9 +85,9 @@ class Log:
 @pytest.fixture
 def clipboard(monkeypatch: pytest.MonkeyPatch) -> FakeClipboard:
     fake = FakeClipboard({CF_UNICODETEXT: "the user's own text"})
-    monkeypatch.setattr(Macros, "win32clipboard", fake)
-    monkeypatch.setattr(Macros, "KeyboardSuppressor", NoHook)
-    monkeypatch.setattr(Macros, "get_minecraft_server", lambda: None)
+    monkeypatch.setattr(macros_app, "win32clipboard", fake)
+    monkeypatch.setattr(macros_app, "KeyboardSuppressor", NoHook)
+    monkeypatch.setattr(macros_app, "get_minecraft_server", lambda: None)
     monkeypatch.setattr(time, "sleep", lambda _s: None)
     return fake
 

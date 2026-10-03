@@ -36,8 +36,8 @@ dev = [
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
-# The scripts live at the repo root, not in a package.
-pythonpath = ["."]
+# The macros package lives under src/; tools/ is imported from the root.
+pythonpath = ["src", "."]
 addopts = ["--strict-markers", "--strict-config", "-ra"]
 
 # ---------------------------------------------------------------------------
@@ -47,6 +47,7 @@ addopts = ["--strict-markers", "--strict-config", "-ra"]
 line-length = 100
 target-version = "py312"
 extend-include = ["*.pyw"]  # launcher.pyw; ruff skips .pyw by default
+src = ["src", "."]  # first-party: the macros package and tools/
 # Recipe Calc/ is a separate OpenProject project with its own tooling decisions.
 extend-exclude = ["Recipe Calc"]
 
@@ -85,9 +86,10 @@ select = [
 python_version = "3.12"
 strict = true
 warn_unreachable = true
-files = ["Macros.py", "launcher.pyw", "mcvote.py", "tools", "tests"]
-# tools/ and tests/ are namespace packages rooted at the repo, so the tests
-# `from tools import tasks` and tools/tasks.py resolve to one module name.
+files = ["Macros.py", "launcher.pyw", "src", "tools", "tests"]
+mypy_path = "src"
+# The macros package is rooted at src/ (mypy_path); tools/ and tests/ are
+# namespace packages rooted at the repo, so each file has one module name.
 explicit_package_bases = true
 # types-pywin32 leaves some win32clipboard functions unannotated (e.g.
 # CloseClipboard, SetClipboardData). The gap is in the third-party stubs, so

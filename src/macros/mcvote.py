@@ -137,7 +137,8 @@ def _make_driver(headless: bool, log: Log) -> WebDriver | None:
     from selenium import webdriver  # noqa: PLC0415 - optional legacy-vote extra
     from selenium.webdriver.firefox.service import Service  # noqa: PLC0415 - ditto
 
-    script_dir = Path(__file__).resolve().parent
+    # The repository root, next to the Macros.py shim (src/macros/ -> root).
+    script_dir = Path(__file__).resolve().parents[2]
     geckodriver_path = script_dir / "geckodriver.exe"
 
     if not geckodriver_path.exists():

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-import mcvote
+from macros import mcvote
 
 URLS = ["https://a.example/vote", "https://b.example/vote"]
 
@@ -97,9 +97,9 @@ def test_open_vote_pages_works_without_selenium(
     for name in [m for m in sys.modules if m == "selenium" or m.startswith("selenium.")]:
         monkeypatch.delitem(sys.modules, name)
     monkeypatch.setitem(sys.modules, "selenium", None)  # makes `import selenium` fail
-    monkeypatch.delitem(sys.modules, "mcvote", raising=False)
+    monkeypatch.delitem(sys.modules, "macros.mcvote", raising=False)
 
-    fresh = importlib.import_module("mcvote")
+    fresh = importlib.import_module("macros.mcvote")
 
     popen: list[list[str]] = []
     monkeypatch.setattr(subprocess, "Popen", lambda argv: popen.append(list(argv)))

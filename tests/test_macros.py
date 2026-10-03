@@ -1,4 +1,4 @@
-"""Tests for the hotkey app's window-independent logic (Macros.py)."""
+"""Tests for the hotkey app's window-independent logic (macros.app)."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from typing import Any
 import psutil
 import pytest
 
-import Macros
-from Macros import App, MinecraftProfile, Profile, server_from_cmdline
+from macros import app as macros_app
+from macros.app import App, MinecraftProfile, Profile, server_from_cmdline
 
 STRAYA = MinecraftProfile.STRAYA
 
@@ -70,27 +70,27 @@ def processes(monkeypatch: pytest.MonkeyPatch) -> list[FakeProc]:
     """The process table psutil reports; tests append to it."""
     table: list[FakeProc] = []
     monkeypatch.setattr(psutil, "process_iter", lambda _attrs: iter(table))
-    monkeypatch.setattr(Macros, "_server_cache", {"value": None, "at": float("-inf")})
+    monkeypatch.setattr(macros_app, "_server_cache", {"value": None, "at": float("-inf")})
     return table
 
 
 def test_get_server_skips_inaccessible_processes(processes: list[FakeProc]) -> None:
     processes.append(FakeProc("javaw.exe", None, deny=True))
     processes.append(FakeProc("javaw.exe", ["--quickPlayMultiplayer", STRAYA]))
-    assert Macros.get_minecraft_server(use_cache=False) == STRAYA
+    assert macros_app.get_minecraft_server(use_cache=False) == STRAYA
 
 
 def test_get_server_none_when_minecraft_not_running(processes: list[FakeProc]) -> None:
     processes.append(FakeProc("explorer.exe", ["explorer.exe"]))
-    assert Macros.get_minecraft_server(use_cache=False) is None
+    assert macros_app.get_minecraft_server(use_cache=False) is None
 
 
 def test_get_server_cached_result_is_reused(processes: list[FakeProc]) -> None:
     processes.append(FakeProc("javaw.exe", ["--quickPlayMultiplayer", STRAYA]))
-    assert Macros.get_minecraft_server() == STRAYA
+    assert macros_app.get_minecraft_server() == STRAYA
     processes.clear()  # client quit, but within the TTL the cached answer stands
-    assert Macros.get_minecraft_server() == STRAYA
-    assert Macros.get_minecraft_server(use_cache=False) is None
+    assert macros_app.get_minecraft_server() == STRAYA
+    assert macros_app.get_minecraft_server(use_cache=False) is None
 
 
 # ── MinecraftProfile._vote_urls_for ──────────────────────────────────────────
@@ -212,8 +212,10 @@ def test_dispatch_logs_handler_error_instead_of_raising() -> None:
 def test_vote_server_logs_why_mcvote_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(Macros, "open_vote_pages", None)
-    monkeypatch.setattr(Macros, "mcvote_import_error", ImportError("No module named 'selenium'"))
+    monkeypatch.setattr(macros_app, "open_vote_pages", None)
+    monkeypatch.setattr(
+        macros_app, "mcvote_import_error", ImportError("No module named 'selenium'")
+    )
     log = Recorder()
     MinecraftProfile().vote_server(log)
     assert log.levels() == ["WARN"]

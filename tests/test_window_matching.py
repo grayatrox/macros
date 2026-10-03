@@ -15,7 +15,7 @@ import pytest
 import win32gui
 import win32process
 
-from Macros import LogWindowProfile, MinecraftProfile, RustProfile
+from macros.app import LogWindowProfile, MinecraftProfile, RustProfile
 
 HWND = 0x1234
 
