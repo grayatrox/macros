@@ -88,10 +88,22 @@ class ExitedError(Exception):
     pass
 
 
+# However the app was started - via the root shim, or `python -m macros`, whose
+# argv[0] is src/macros/__main__.py and cannot be run as a plain script - the
+# new copy is started through the shim (OP #643).
+SHIM = str(ROOT / "Macros.py")
+MAIN = str(ROOT / "src" / "macros" / "__main__.py")
+
+
 @pytest.mark.parametrize(
     "argv",
-    [["Macros.py"], ["Macros.py", macros_app.RESTART_FLAG]],
-    ids=["first-reload", "repeat-reload"],
+    [
+        ["Macros.py"],
+        ["Macros.py", macros_app.RESTART_FLAG],
+        [MAIN],
+        [MAIN, macros_app.RESTART_FLAG],
+    ],
+    ids=["first-reload", "repeat-reload", "module-first-reload", "module-repeat-reload"],
 )
 def test_restart_relaunches_with_the_flag_exactly_once(
     monkeypatch: pytest.MonkeyPatch, argv: list[str]
@@ -106,4 +118,4 @@ def test_restart_relaunches_with_the_flag_exactly_once(
     monkeypatch.setattr(os, "_exit", fake_exit)
     with pytest.raises(ExitedError):
         macros_app.restart_process()
-    assert launched == [[sys.executable, "Macros.py", macros_app.RESTART_FLAG]]
+    assert launched == [[sys.executable, SHIM, macros_app.RESTART_FLAG]]

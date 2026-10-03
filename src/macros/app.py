@@ -27,6 +27,7 @@ import tkinter as tk
 from collections.abc import Callable
 from ctypes import wintypes
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, ClassVar, Protocol, Self, TypedDict
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -461,10 +462,15 @@ def release_single_instance(handle: int) -> None:
     _kernel32.CloseHandle(handle)
 
 
+# The repository-root shim. Restarts go through it because argv[0] may be
+# src/macros/__main__.py (`python -m macros`), which cannot run as a script.
+ENTRY_SCRIPT = Path(__file__).resolve().parents[2] / "Macros.py"
+
+
 def restart_process() -> None:
     """Replace this process with a fresh copy of itself. Does not return."""
-    argv = [arg for arg in sys.argv if arg != RESTART_FLAG]
-    subprocess.Popen([sys.executable, *argv, RESTART_FLAG])
+    args = [arg for arg in sys.argv[1:] if arg != RESTART_FLAG]
+    subprocess.Popen([sys.executable, str(ENTRY_SCRIPT), *args, RESTART_FLAG])
     os._exit(0)  # releases the mutex the new copy is waiting for
 
 
