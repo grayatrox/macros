@@ -20,6 +20,7 @@ import ctypes
 import base64
 import threading
 import tkinter as tk
+from collections.abc import Callable
 from ctypes import wintypes
 from datetime import datetime
 
@@ -48,10 +49,14 @@ except ImportError as exc:
     )
     raise
 
+open_vote_pages: Callable[..., int] | None
+mcvote_import_error: ImportError | None = None
 try:
     from mcvote import open_vote_pages
-except ImportError:
+except ImportError as exc:
+    # Kept so vote_server() can report the real cause, not just "unavailable".
     open_vote_pages = None
+    mcvote_import_error = exc
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -598,7 +603,7 @@ class MinecraftProfile(Profile):
 
     def vote_server(self, log):
         if open_vote_pages is None:
-            log("mcvote module not available", "WARN")
+            log(f"mcvote module not available: {mcvote_import_error}", "WARN")
             return
         server = get_minecraft_server()
         urls = self._vote_urls_for(server)

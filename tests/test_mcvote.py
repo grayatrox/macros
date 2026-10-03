@@ -6,7 +6,9 @@ webbrowser.open are replaced with recorders.
 
 from __future__ import annotations
 
+import importlib
 import subprocess
+import sys
 import webbrowser
 from pathlib import Path
 
@@ -85,3 +87,28 @@ def test_falls_back_when_firefox_fails_to_launch(
     assert mcvote.open_vote_pages(URLS, callback=opened.log.append) == 2
     assert opened.browser == URLS
     assert any("Could not launch Firefox" in line for line in opened.log)
+
+
+# ── importable without Selenium (OP #635) ────────────────────────────────────
+
+
+def test_open_vote_pages_works_without_selenium(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Only the legacy vote() flow needs Selenium; it is an optional extra.
+    for name in [
+        m for m in sys.modules if m == "selenium" or m.startswith("selenium.")
+    ]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setitem(sys.modules, "selenium", None)  # makes `import selenium` fail
+    monkeypatch.delitem(sys.modules, "mcvote", raising=False)
+
+    fresh = importlib.import_module("mcvote")
+
+    popen: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "Popen", lambda argv: popen.append(list(argv)))
+    exe = tmp_path / "firefox.exe"
+    exe.write_text("", encoding="utf-8")
+    monkeypatch.setattr(fresh, "FIREFOX_PATHS", [str(exe)])
+    assert fresh.open_vote_pages(URLS, callback=lambda _m: None) == 2
+    assert popen == [[str(exe), *URLS]]

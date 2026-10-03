@@ -215,3 +215,19 @@ def test_dispatch_logs_handler_error_instead_of_raising() -> None:
     profile.dispatch("f3", log)
     assert log.levels() == ["EVENT", "ERROR"]
     assert "kaput" in log.lines[-1][0]
+
+
+# ── vote_server when mcvote cannot be imported (OP #635) ─────────────────────
+
+
+def test_vote_server_logs_why_mcvote_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(Macros, "open_vote_pages", None)
+    monkeypatch.setattr(
+        Macros, "mcvote_import_error", ImportError("No module named 'selenium'")
+    )
+    log = Recorder()
+    MinecraftProfile().vote_server(log)
+    assert log.levels() == ["WARN"]
+    assert "No module named 'selenium'" in log.lines[0][0]

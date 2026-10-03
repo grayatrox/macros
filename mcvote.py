@@ -13,13 +13,11 @@ Legacy:
   vote()             full-auto Selenium flow for findmcserver.com pages. Cannot
                      pass Turnstile (geckodriver forces navigator.webdriver=True)
                      — kept only for captcha-free findmcserver-style pages.
+                     Needs the optional `legacy-vote` extra (Selenium), which
+                     is imported inside the legacy functions so that
+                     open_vote_pages() works without it.
 """
 
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.firefox.service import Service
 import time
 import os
 
@@ -128,6 +126,9 @@ def _make_driver(headless, log):
     navigator.webdriver (geckodriver forces it True), so Cloudflare Turnstile
     sites will still reject it — use open_vote_pages() for those.
     """
+    from selenium import webdriver
+    from selenium.webdriver.firefox.service import Service
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
     geckodriver_path = os.path.join(script_dir, "geckodriver.exe")
 
@@ -167,6 +168,10 @@ def vote(callback=None, headless=True, server_urls=None):
     server_urls defaults to [SERVER_URL] (example); the scraping assumes a
     findmcserver.com layout. Returns the number of pages successfully voted on.
     """
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.support.ui import WebDriverWait
+
     if server_urls is None:
         urls = [SERVER_URL]
     elif isinstance(server_urls, str):
