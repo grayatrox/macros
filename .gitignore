@@ -7,3 +7,6 @@ geckodriver.exe
 
 # Machine-local Claude Code settings
 .claude/settings.local.json
+
+# Local virtualenv (python -m venv .venv)
+.venv/

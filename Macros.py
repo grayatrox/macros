@@ -8,8 +8,8 @@ A persistent background app that:
   • Detects the active window and dispatches to the matching profile
   • Streams events to a toggleable dark-themed GUI log window
 
-Dependencies:
-    pip install pystray keyboard pyautogui pywin32 psutil pillow
+Dependencies (pinned, hashed - see pyproject.toml):
+    pip install --require-hashes -r requirements.lock
 """
 
 import io
@@ -25,104 +25,28 @@ from datetime import datetime
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Dependency bootstrap  –  runs before any third-party import
+# Third-party imports
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Maps  import_name → pip package name  (only needed when they differ)
-_DEPS: dict[str, str] = {
-    "pystray":    "pystray",
-    "keyboard":   "keyboard",
-    "pyautogui":  "pyautogui",
-    "win32gui":   "pywin32",
-    "win32process": "pywin32",
-    "psutil":     "psutil",
-    "PIL":        "pillow",
-}
-
-def _bootstrap_deps():
-    import importlib, subprocess, importlib.util
-
-    missing = []
-    seen_packages = set()
-    for module, package in _DEPS.items():
-        if importlib.util.find_spec(module) is None and package not in seen_packages:
-            missing.append(package)
-            seen_packages.add(package)
-
-    if not missing:
-        return
-
-    # Use a simple tkinter window so the user isn't left staring at nothing
-    root = tk.Tk()
-    root.title("send_to_window — first run setup")
-    root.geometry("480x200")
-    root.configure(bg="#1e1f29")
-    root.resizable(False, False)
-
-    tk.Label(
-        root, text="Installing missing dependencies…",
-        bg="#1e1f29", fg="#bd93f9",
-        font=("Consolas", 11, "bold"), pady=16,
-    ).pack()
-
-    status_var = tk.StringVar(value="")
-    status_lbl = tk.Label(
-        root, textvariable=status_var,
-        bg="#1e1f29", fg="#f8f8f2",
-        font=("Consolas", 10), wraplength=440,
+try:
+    from PIL import Image, ImageDraw
+    import keyboard
+    import pyautogui
+    import win32gui
+    import win32process
+    import psutil
+    import pystray
+except ImportError as exc:
+    # Under pythonw (the launcher's GUI mode) there is no console for the
+    # traceback, so say what is missing and how to fix it in a dialog.
+    ctypes.windll.user32.MessageBoxW(
+        0,
+        f"{exc}\n\nInstall the pinned dependencies from the Macros folder:\n\n"
+        "  pip install --require-hashes -r requirements.lock",
+        "send_to_window — missing dependency",
+        0x10,  # MB_ICONERROR
     )
-    status_lbl.pack()
-
-    progress_var = tk.StringVar(value="")
-    tk.Label(
-        root, textvariable=progress_var,
-        bg="#1e1f29", fg="#6272a4",
-        font=("Consolas", 9),
-    ).pack(pady=6)
-
-    root.update()
-
-    failed = []
-    for i, package in enumerate(missing, 1):
-        status_var.set(f"Installing {package}  ({i}/{len(missing)})")
-        progress_var.set(" → ".join(missing[:i]))
-        root.update()
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", package, "--quiet"],
-            capture_output=True, text=True,
-        )
-        if result.returncode != 0:
-            failed.append(package)
-
-    root.destroy()
-
-    if failed:
-        # Fall back to a plain error message if the installs failed
-        import ctypes
-        ctypes.windll.user32.MessageBoxW(
-            0,
-            "Failed to install the following packages:\n\n"
-            + "\n".join(f"  • {p}" for p in failed)
-            + "\n\nTry running:  pip install " + " ".join(failed),
-            "send_to_window — setup error",
-            0x10,  # MB_ICONERROR
-        )
-        sys.exit(1)
-
-_bootstrap_deps()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Third-party imports  (safe after bootstrap)
-# ─────────────────────────────────────────────────────────────────────────────
-
-from PIL import Image, ImageDraw
-import keyboard
-import pyautogui
-import win32gui
-import win32process
-import psutil
-import pystray
+    raise
 
 try:
     from mcvote import open_vote_pages
