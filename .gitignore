@@ -1,0 +1,9 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Third-party binary; download separately (Selenium Firefox driver)
+geckodriver.exe
+
+# Machine-local Claude Code settings
+.claude/settings.local.json
