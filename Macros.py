@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-send_to_window.py
-─────────────────
+Macros.py - the "send_to_window" hotkey app
+───────────────────────────────────────────
+(Its window, tray icon and dialogs are titled "send_to_window".)
+
 A persistent background app that:
   • Sits in the system tray (right-click → Show Log / Hide Log / Quit)
   • Listens globally for hotkeys defined per-profile
@@ -699,9 +701,9 @@ class MinecraftProfile(Profile):
     STRAYA = "strayamc.sparked.network"
 
     # Vote pages tied to each server. vote_server() opens every URL for whichever
-    # server is running in a visible browser and pre-fills the username via that
-    # site's profile in mcvote (VOTE_SITE_PROFILES); you solve the captcha / log
-    # in and click the final vote button.
+    # server is running in the user's real Firefox, where the Tampermonkey
+    # userscript (strayamc_vote_autofill.user.js) pre-fills the username; you
+    # solve the captcha / log in and click the final vote button.
     VOTE_SITES: ClassVar[tuple[VoteSite, ...]] = (
         {
             "server": STRAYA,
