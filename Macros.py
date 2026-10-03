@@ -357,6 +357,55 @@ _user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, cty
 _user32.PostThreadMessageW.argtypes = [wintypes.DWORD, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM]
 _kernel32.GetModuleHandleW.restype = wintypes.HMODULE
 _kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+_kernel32.CreateMutexW.restype = wintypes.HANDLE
+_kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+_kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Single instance
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Two copies would both hook the same global hotkeys, so every macro would
+# fire twice. A named mutex, unlike the launcher's PID tracking, still works
+# after a reload has replaced the process the launcher started.
+INSTANCE_MUTEX = "Local\\send_to_window-macros"
+ERROR_ALREADY_EXISTS = 183
+
+# Marks a process started by restart_process(), which must wait for the old
+# process to exit and release the mutex rather than refuse to start.
+RESTART_FLAG = "--restarted"
+
+
+def acquire_single_instance(name: str = INSTANCE_MUTEX, wait_seconds: float = 0):
+    """Claim the named mutex. Returns its handle, or None if already held.
+
+    With wait_seconds, keep retrying that long before giving up. The handle
+    must stay open for the life of the process; Windows closes it on exit.
+    """
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        handle = _kernel32.CreateMutexW(None, False, name)
+        if not handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+        if ctypes.get_last_error() != ERROR_ALREADY_EXISTS:
+            return handle
+        _kernel32.CloseHandle(handle)
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(0.1)
+
+
+def release_single_instance(handle) -> None:
+    _kernel32.CloseHandle(handle)
+
+
+def restart_process():
+    """Replace this process with a fresh copy of itself. Does not return."""
+    import subprocess
+    argv = [arg for arg in sys.argv if arg != RESTART_FLAG]
+    subprocess.Popen([sys.executable, *argv, RESTART_FLAG])
+    os._exit(0)  # releases the mutex the new copy is waiting for
 
 
 class KeyboardSuppressor:
@@ -681,9 +730,7 @@ class LogWindowProfile(Profile):
     def reload(self, log):
         log("Reloading…", "WARN")
         time.sleep(0.2)
-        import subprocess
-        subprocess.Popen([sys.executable] + sys.argv)
-        os._exit(0)
+        restart_process()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -761,9 +808,7 @@ class App:
 
     def _reload(self, _icon=None, _item=None):
         self.log_win.log("Reloading…", "WARN")
-        import subprocess
-        subprocess.Popen([sys.executable] + sys.argv)
-        os._exit(0)
+        restart_process()
 
     def _build_tray(self):
         menu = pystray.Menu(
@@ -805,4 +850,15 @@ class App:
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # Kept for the life of the process; Windows releases it on exit.
+    instance = acquire_single_instance(wait_seconds=5 if RESTART_FLAG in sys.argv else 0)
+    if instance is None:
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            "send_to_window is already running.\n\n"
+            "Use its tray icon to show the log, reload or quit.",
+            "send_to_window",
+            0x40,  # MB_ICONINFORMATION
+        )
+        sys.exit(0)
     App().run()
