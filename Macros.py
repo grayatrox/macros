@@ -519,33 +519,48 @@ class MinecraftProfile(Profile):
         """
         import win32clipboard
 
+        def note(message, level):
+            if log:
+                log(message, level)
+
+        # Per-format failures surface as TypeError (format not convertible) or
+        # win32clipboard.error (the API call itself failed).
+        format_errors = (TypeError, win32clipboard.error)
+
         def snapshot_clipboard():
             """Return a dict of {format: data} for everything on the clipboard."""
             data = {}
+            unreadable = []
             try:
                 win32clipboard.OpenClipboard()
                 fmt = win32clipboard.EnumClipboardFormats(0)
                 while fmt:
                     try:
                         data[fmt] = win32clipboard.GetClipboardData(fmt)
-                    except Exception:
-                        pass  # some formats can't be read directly; skip them
+                    except format_errors:
+                        unreadable.append(fmt)  # e.g. delayed-render formats
                     fmt = win32clipboard.EnumClipboardFormats(fmt)
             finally:
                 win32clipboard.CloseClipboard()
+            if unreadable:
+                note(f"Clipboard format(s) {unreadable} could not be read and "
+                     "will not be restored", "DEBUG")
             return data
 
         def restore_clipboard(snapshot):
+            lost = []
             try:
                 win32clipboard.OpenClipboard()
                 win32clipboard.EmptyClipboard()
                 for fmt, data in snapshot.items():
                     try:
                         win32clipboard.SetClipboardData(fmt, data)
-                    except Exception:
-                        pass  # skip formats that can't be restored (e.g. owner-drawn)
+                    except format_errors:
+                        lost.append(fmt)  # e.g. owner-drawn formats
             finally:
                 win32clipboard.CloseClipboard()
+            if lost:
+                note(f"Could not restore clipboard format(s) {lost}", "WARN")
 
         def set_clipboard_text(text):
             try:
@@ -556,23 +571,25 @@ class MinecraftProfile(Profile):
                 win32clipboard.CloseClipboard()
 
         previous = snapshot_clipboard()
-        set_clipboard_text(message)
+        # From here on the clipboard holds our message, so every exit path -
+        # including pyautogui's corner failsafe - must hand the user's back.
+        try:
+            set_clipboard_text(message)
+            with KeyboardSuppressor() as blocker:
+                if not blocker.active:
+                    note("Could not install the keyboard hook — real keys will "
+                         "leak into this macro", "WARN")
+                pyautogui.press('t')
+                time.sleep(0.3)
+                pyautogui.hotkey('ctrl', 'v')
+                time.sleep(0.1)
+                pyautogui.press('enter')
+        finally:
+            restore_clipboard(previous)
 
-        with KeyboardSuppressor() as blocker:
-            if log and not blocker.active:
-                log("Could not install the keyboard hook — real keys will leak "
-                    "into this macro", "WARN")
-            pyautogui.press('t')
-            time.sleep(0.3)
-            pyautogui.hotkey('ctrl', 'v')
-            time.sleep(0.1)
-            pyautogui.press('enter')
-
-        if log and blocker.suppressed:
-            log(f"Suppressed {blocker.suppressed} physical keypress(es) during '{message}'",
-                "DEBUG")
-
-        restore_clipboard(previous)
+        if blocker.suppressed:
+            note(f"Suppressed {blocker.suppressed} physical keypress(es) during "
+                 f"'{message}'", "DEBUG")
 
     def go_home(self, log):
         # NB: `case self.STRAYA` (a dotted name) compares against the constant.
