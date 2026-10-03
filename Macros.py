@@ -250,6 +250,19 @@ def get_active_window_title() -> str:
     return win32gui.GetWindowText(win32gui.GetForegroundWindow())
 
 
+def get_foreground_process() -> tuple[str | None, int]:
+    """(executable name, pid) of the process owning the foreground window.
+
+    The name is None when psutil cannot inspect the process (it has exited,
+    or belongs to an elevated / protected process).
+    """
+    _thread_id, pid = win32process.GetWindowThreadProcessId(win32gui.GetForegroundWindow())
+    try:
+        return psutil.Process(pid).name(), pid
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return None, pid
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Minecraft server detection
 # ─────────────────────────────────────────────────────────────────────────────
@@ -447,16 +460,27 @@ class Profile:
     Base class for app profiles.
     Subclasses define:
       WINDOW_KEYWORD  – matched (case-insensitive) against the active window title
+      PROCESS_NAMES   – lower-case executable names allowed to own that window
       hotkeys         – dict of {hotkey_str: handler_method}
+
+    Both must match: a title alone also matches browser tabs, folders and
+    editors that merely mention the game, and the macros would then type
+    into them.
     """
     WINDOW_KEYWORD: str = ""
+    PROCESS_NAMES: frozenset[str] = frozenset()
 
     @property
     def hotkeys(self) -> dict:
         return {}
 
+    def owns_process(self, name: str | None, pid: int) -> bool:
+        return name is not None and name.lower() in self.PROCESS_NAMES
+
     def is_active_window(self) -> bool:
-        return self.WINDOW_KEYWORD.lower() in get_active_window_title().lower()
+        if self.WINDOW_KEYWORD.lower() not in get_active_window_title().lower():
+            return False
+        return self.owns_process(*get_foreground_process())
 
     def dispatch(self, hotkey: str, log):
         handler = self.hotkeys.get(hotkey)
@@ -482,6 +506,9 @@ class Profile:
 
 class MinecraftProfile(Profile):
     WINDOW_KEYWORD = "Minecraft"
+    # Java Edition runs under javaw.exe (java.exe from some launchers);
+    # Bedrock is kept because title matching used to cover it too.
+    PROCESS_NAMES = frozenset({"javaw.exe", "java.exe", "minecraft.windows.exe"})
 
     # Known servers, so the command methods below can read as
     # `case self.STRAYA:` instead of a bare string literal.
@@ -641,6 +668,10 @@ class MinecraftProfile(Profile):
 class LogWindowProfile(Profile):
     WINDOW_KEYWORD = "send_to_window"
 
+    def owns_process(self, name, pid):
+        # Our own log window - not another copy, nor a file with this name.
+        return pid == os.getpid()
+
     @property
     def hotkeys(self) -> dict:
         return {
@@ -661,6 +692,7 @@ class LogWindowProfile(Profile):
 
 class RustProfile(Profile):
     WINDOW_KEYWORD = "Rust"
+    PROCESS_NAMES = frozenset({"rustclient.exe"})
 
     @property
     def hotkeys(self) -> dict:
