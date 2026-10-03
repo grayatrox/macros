@@ -29,3 +29,10 @@ dev = [
     "uv>=0.12,<0.13",       # tools/lock.py
     "selenium>=4.32,<5",    # so mypy and tests can see mcvote's legacy flow
 ]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+# The scripts live at the repo root, not in a package.
+pythonpath = ["."]
+addopts = ["--strict-markers", "--strict-config", "-ra"]

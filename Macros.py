@@ -259,6 +259,23 @@ _server_cache = {"value": None, "at": 0.0}
 _SERVER_CACHE_TTL = 5.0  # seconds; scanning every process is too slow per-hotkey
 
 
+def server_from_cmdline(name, cmdline):
+    """The Quick Play server on one process's command line, or None.
+
+    Only Java processes are considered; name and cmdline may be None, as
+    psutil reports them for processes it cannot fully inspect.
+    """
+    if "java" not in (name or "").lower():
+        return None
+    cmdline = cmdline or []
+    for i, arg in enumerate(cmdline):
+        if arg == _QUICKPLAY_FLAG and i + 1 < len(cmdline):
+            return cmdline[i + 1]
+        if arg.startswith(_QUICKPLAY_FLAG + "="):  # tolerate --flag=value form
+            return arg.split("=", 1)[1]
+    return None
+
+
 def get_minecraft_server(use_cache: bool = True):
     """Return the server the running Minecraft client was launched into, or None.
 
@@ -273,16 +290,7 @@ def get_minecraft_server(use_cache: bool = True):
     server = None
     for proc in psutil.process_iter(["name", "cmdline"]):
         try:
-            if "java" not in (proc.info["name"] or "").lower():
-                continue
-            cmdline = proc.info["cmdline"] or []
-            for i, arg in enumerate(cmdline):
-                if arg == _QUICKPLAY_FLAG and i + 1 < len(cmdline):
-                    server = cmdline[i + 1]
-                    break
-                if arg.startswith(_QUICKPLAY_FLAG + "="):  # tolerate --flag=value form
-                    server = arg.split("=", 1)[1]
-                    break
+            server = server_from_cmdline(proc.info["name"], proc.info["cmdline"])
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
         if server:
