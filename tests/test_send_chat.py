@@ -87,9 +87,7 @@ def clipboard(monkeypatch: pytest.MonkeyPatch) -> FakeClipboard:
     return fake
 
 
-def _keys(
-    monkeypatch: pytest.MonkeyPatch, *, fail_on: str | None = None
-) -> SimpleNamespace:
+def _keys(monkeypatch: pytest.MonkeyPatch, *, fail_on: str | None = None) -> SimpleNamespace:
     seen = SimpleNamespace(pasted=None, presses=[])
 
     def press(key: str) -> None:

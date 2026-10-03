@@ -43,9 +43,7 @@ def foreground(monkeypatch: pytest.MonkeyPatch) -> Foreground:
 
     monkeypatch.setattr(Macros.win32gui, "GetForegroundWindow", lambda: HWND)
     monkeypatch.setattr(Macros.win32gui, "GetWindowText", lambda _h: window.title)
-    monkeypatch.setattr(
-        Macros.win32process, "GetWindowThreadProcessId", lambda _h: (1, window.pid)
-    )
+    monkeypatch.setattr(Macros.win32process, "GetWindowThreadProcessId", lambda _h: (1, window.pid))
     monkeypatch.setattr(Macros.psutil, "Process", FakeProcess)
     return window
 
@@ -67,9 +65,7 @@ def test_minecraft_profile_ignores_other_apps_with_minecraft_in_title(
 
 
 @pytest.mark.parametrize("exe", ["javaw.exe", "java.exe", "JAVAW.EXE"])
-def test_minecraft_profile_matches_the_java_client(
-    foreground: Foreground, exe: str
-) -> None:
+def test_minecraft_profile_matches_the_java_client(foreground: Foreground, exe: str) -> None:
     foreground.title, foreground.exe = (
         "Minecraft 1.21.1 - Multiplayer (3rd-party Server)",
         exe,

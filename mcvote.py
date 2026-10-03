@@ -52,6 +52,7 @@ def _find_firefox(log=lambda m: None):
 # Open vote pages in the user's real browser (Turnstile-safe)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def open_vote_pages(server_urls, callback=None):
     """Open the vote URLs as tabs in the user's REAL Firefox.
 
@@ -93,6 +94,7 @@ def open_vote_pages(server_urls, callback=None):
 # Legacy full-auto voting (findmcserver.com, Selenium)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _firefox_user_agent(firefox_binary, log):
     """Build the UA string real Firefox sends. Firefox's UA is deterministic from
     its major version and the OS, and freezes the point release, e.g.
@@ -113,8 +115,7 @@ def _firefox_user_agent(firefox_binary, log):
         log("⚠ Could not read Firefox version — using its default user agent")
         return None
     major = version.split(".")[0]
-    ua = (f"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:{major}.0) "
-          f"Gecko/20100101 Firefox/{major}.0")
+    ua = f"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:{major}.0) Gecko/20100101 Firefox/{major}.0"
     log(f"Spoofing user agent as Firefox {major} (installed: {version})")
     return ua
 
@@ -208,7 +209,9 @@ def vote(callback=None, headless=True, server_urls=None):
 
         try:
             username_field = WebDriverWait(driver, 15).until(
-                EC.visibility_of_element_located((By.CSS_SELECTOR, "input[placeholder='Minecraft Username']"))
+                EC.visibility_of_element_located(
+                    (By.CSS_SELECTOR, "input[placeholder='Minecraft Username']")
+                )
             )
             log("Found username field!")
             log(f"Filling username: {USERNAME}")
@@ -220,7 +223,9 @@ def vote(callback=None, headless=True, server_urls=None):
             return False
 
         try:
-            vote_button = driver.find_element(By.CSS_SELECTOR, "button[aria-label='Vote for the Server']")
+            vote_button = driver.find_element(
+                By.CSS_SELECTOR, "button[aria-label='Vote for the Server']"
+            )
             log("✓ Vote button found!")
             log("Clicking vote button...")
             vote_button.click()

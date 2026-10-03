@@ -64,19 +64,19 @@ except ImportError as exc:
 # ─────────────────────────────────────────────────────────────────────────────
 
 LEVELS = {
-    "INFO":    "#8be9fd",   # cyan
-    "SUCCESS": "#50fa7b",   # green
-    "WARN":    "#ffb86c",   # orange
-    "ERROR":   "#ff5555",   # red
-    "DEBUG":   "#6272a4",   # muted purple
-    "EVENT":   "#bd93f9",   # lavender
+    "INFO": "#8be9fd",  # cyan
+    "SUCCESS": "#50fa7b",  # green
+    "WARN": "#ffb86c",  # orange
+    "ERROR": "#ff5555",  # red
+    "DEBUG": "#6272a4",  # muted purple
+    "EVENT": "#bd93f9",  # lavender
 }
 
-BG          = "#1e1f29"
-BG_HEADER   = "#16171f"
-FG          = "#f8f8f2"
-FG_DIM      = "#6272a4"
-ACCENT      = "#bd93f9"
+BG = "#1e1f29"
+BG_HEADER = "#16171f"
+FG = "#f8f8f2"
+FG_DIM = "#6272a4"
+ACCENT = "#bd93f9"
 
 
 def make_app_image(size: int = 64) -> "Image.Image":
@@ -87,7 +87,7 @@ def make_app_image(size: int = 64) -> "Image.Image":
     """
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    ring = size // 16                    # keep proportions at any size
+    ring = size // 16  # keep proportions at any size
     draw.ellipse([ring, ring, size - ring, size - ring], fill=ACCENT)
     hole = size // 3.5
     draw.ellipse([hole, hole, size - hole, size - hole], fill=BG)
@@ -129,15 +129,21 @@ class LogWindow:
         header.pack(fill="x")
 
         tk.Label(
-            header, text="⬡  send_to_window",
-            bg=BG_HEADER, fg=ACCENT,
-            font=("Consolas", 12, "bold"), padx=12,
+            header,
+            text="⬡  send_to_window",
+            bg=BG_HEADER,
+            fg=ACCENT,
+            font=("Consolas", 12, "bold"),
+            padx=12,
         ).pack(side="left")
 
         self._status_label = tk.Label(
-            header, text="● listening",
-            bg=BG_HEADER, fg=LEVELS["SUCCESS"],
-            font=("Consolas", 10), padx=12,
+            header,
+            text="● listening",
+            bg=BG_HEADER,
+            fg=LEVELS["SUCCESS"],
+            font=("Consolas", 10),
+            padx=12,
         )
         self._status_label.pack(side="right")
 
@@ -147,14 +153,17 @@ class LogWindow:
 
         self._text = tk.Text(
             frame,
-            bg=BG, fg=FG,
+            bg=BG,
+            fg=FG,
             font=("Consolas", 10),
-            relief="flat", bd=0,
+            relief="flat",
+            bd=0,
             wrap="word",
             state="disabled",
             selectbackground=ACCENT,
             insertbackground=FG,
-            padx=10, pady=8,
+            padx=10,
+            pady=8,
         )
         scroll = tk.Scrollbar(frame, command=self._text.yview, bg=BG, troughcolor=BG_HEADER)
         self._text.configure(yscrollcommand=scroll.set)
@@ -163,18 +172,26 @@ class LogWindow:
 
         # Configure a tag per log level
         for level, color in LEVELS.items():
-            self._text.tag_configure(f"lvl_{level}", foreground=color, font=("Consolas", 10, "bold"))
-        self._text.tag_configure("ts",  foreground=FG_DIM, font=("Consolas", 9))
-        self._text.tag_configure("msg", foreground=FG,     font=("Consolas", 10))
+            self._text.tag_configure(
+                f"lvl_{level}", foreground=color, font=("Consolas", 10, "bold")
+            )
+        self._text.tag_configure("ts", foreground=FG_DIM, font=("Consolas", 9))
+        self._text.tag_configure("msg", foreground=FG, font=("Consolas", 10))
 
         # Footer / clear button
         footer = tk.Frame(self.root, bg=BG_HEADER, pady=4)
         footer.pack(fill="x")
         tk.Button(
-            footer, text="Clear",
-            bg=BG_HEADER, fg=FG_DIM,
-            activebackground=BG, activeforeground=FG,
-            relief="flat", bd=0, padx=10, pady=2,
+            footer,
+            text="Clear",
+            bg=BG_HEADER,
+            fg=FG_DIM,
+            activebackground=BG,
+            activeforeground=FG,
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=2,
             command=self._clear,
             font=("Consolas", 9),
             cursor="hand2",
@@ -200,8 +217,10 @@ class LogWindow:
 
     def set_status(self, text: str, level: str = "SUCCESS"):
         color = LEVELS.get(level.upper(), FG)
+
         def _update():
             self._status_label.configure(text=text, fg=color)
+
         self.root.after(0, _update)
 
     # ── Internal (must run on main thread) ───────────────────────────────────
@@ -235,9 +254,11 @@ class LogWindow:
 
     def run(self):
         """Blocking — call from the main thread."""
+
         def poll():
             self._flush_pending()
             self.root.after(100, poll)
+
         self.root.after(100, poll)
         self.root.mainloop()
 
@@ -245,6 +266,7 @@ class LogWindow:
 # ─────────────────────────────────────────────────────────────────────────────
 # Window helpers
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def get_active_window_title() -> str:
     return win32gui.GetWindowText(win32gui.GetForegroundWindow())
@@ -327,34 +349,42 @@ _user32 = ctypes.WinDLL("user32", use_last_error=True)
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
 WH_KEYBOARD_LL = 13
-WM_KEYDOWN     = 0x0100
-WM_SYSKEYDOWN  = 0x0104
-WM_QUIT        = 0x0012
+WM_KEYDOWN = 0x0100
+WM_SYSKEYDOWN = 0x0104
+WM_QUIT = 0x0012
 LLKHF_INJECTED = 0x10
-HC_ACTION      = 0
+HC_ACTION = 0
 
 
 class _KBDLLHOOKSTRUCT(ctypes.Structure):
     _fields_ = [
-        ("vkCode",      wintypes.DWORD),
-        ("scanCode",    wintypes.DWORD),
-        ("flags",       wintypes.DWORD),
-        ("time",        wintypes.DWORD),
+        ("vkCode", wintypes.DWORD),
+        ("scanCode", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
         ("dwExtraInfo", ctypes.c_size_t),
     ]
 
 
-_HOOKPROC = ctypes.WINFUNCTYPE(
-    ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM
-)
+_HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
 
 _user32.SetWindowsHookExW.restype = wintypes.HHOOK
 _user32.SetWindowsHookExW.argtypes = [ctypes.c_int, _HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
 _user32.CallNextHookEx.restype = ctypes.c_ssize_t
 _user32.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
 _user32.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
-_user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, ctypes.c_uint, ctypes.c_uint]
-_user32.PostThreadMessageW.argtypes = [wintypes.DWORD, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM]
+_user32.GetMessageW.argtypes = [
+    ctypes.POINTER(wintypes.MSG),
+    wintypes.HWND,
+    ctypes.c_uint,
+    ctypes.c_uint,
+]
+_user32.PostThreadMessageW.argtypes = [
+    wintypes.DWORD,
+    ctypes.c_uint,
+    wintypes.WPARAM,
+    wintypes.LPARAM,
+]
 _kernel32.GetModuleHandleW.restype = wintypes.HMODULE
 _kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 _kernel32.CreateMutexW.restype = wintypes.HANDLE
@@ -403,6 +433,7 @@ def release_single_instance(handle) -> None:
 def restart_process():
     """Replace this process with a fresh copy of itself. Does not return."""
     import subprocess
+
     argv = [arg for arg in sys.argv if arg != RESTART_FLAG]
     subprocess.Popen([sys.executable, *argv, RESTART_FLAG])
     os._exit(0)  # releases the mutex the new copy is waiting for
@@ -431,7 +462,7 @@ class KeyboardSuppressor:
         self.max_seconds = max_seconds
         self.also_block_mouse = also_block_mouse
         self.suppressed = 0
-        self.hard_blocked = False   # True if BlockInput() was actually allowed
+        self.hard_blocked = False  # True if BlockInput() was actually allowed
         self._hook = None
         self._thread = None
         self._thread_id = None
@@ -504,6 +535,7 @@ class KeyboardSuppressor:
 # Profile base
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class Profile:
     """
     Base class for app profiles.
@@ -516,6 +548,7 @@ class Profile:
     editors that merely mention the game, and the macros would then type
     into them.
     """
+
     WINDOW_KEYWORD: str = ""
     PROCESS_NAMES: frozenset[str] = frozenset()
 
@@ -536,11 +569,14 @@ class Profile:
         if handler is None:
             return
         if not self.is_active_window():
-            log(f"[{self.WINDOW_KEYWORD}] '{hotkey}' fired but window not focused — skipped", "WARN")
+            log(
+                f"[{self.WINDOW_KEYWORD}] '{hotkey}' fired but window not focused — skipped", "WARN"
+            )
             return
         log(f"[{self.WINDOW_KEYWORD}] '{hotkey}' → {handler.__name__}()", "EVENT")
         try:
             import inspect
+
             if "log" in inspect.signature(handler).parameters:
                 handler(log)
             else:
@@ -552,6 +588,7 @@ class Profile:
 # ─────────────────────────────────────────────────────────────────────────────
 # Minecraft Profile
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class MinecraftProfile(Profile):
     WINDOW_KEYWORD = "Minecraft"
@@ -568,14 +605,16 @@ class MinecraftProfile(Profile):
     # site's profile in mcvote (VOTE_SITE_PROFILES); you solve the captcha / log
     # in and click the final vote button.
     VOTE_SITES = [
-        {"server": STRAYA, "voteurls": [
-            "https://minecraftservers.org/vote/000000",
-            "https://minecraft-serverlist.com/server/0000/vote",
-            "https://www.planetminecraft.com/server/example/vote/",
-            "https://www.minecraftiplist.com/server/example-00000/vote",
-            "https://craftlist.org/example#vote",
-            
-        ]},
+        {
+            "server": STRAYA,
+            "voteurls": [
+                "https://minecraftservers.org/vote/000000",
+                "https://minecraft-serverlist.com/server/0000/vote",
+                "https://www.planetminecraft.com/server/example/vote/",
+                "https://www.minecraftiplist.com/server/example-00000/vote",
+                "https://craftlist.org/example#vote",
+            ],
+        },
     ]
 
     @property
@@ -619,8 +658,10 @@ class MinecraftProfile(Profile):
             finally:
                 win32clipboard.CloseClipboard()
             if unreadable:
-                note(f"Clipboard format(s) {unreadable} could not be read and "
-                     "will not be restored", "DEBUG")
+                note(
+                    f"Clipboard format(s) {unreadable} could not be read and will not be restored",
+                    "DEBUG",
+                )
             return data
 
         def restore_clipboard(snapshot):
@@ -653,19 +694,22 @@ class MinecraftProfile(Profile):
             set_clipboard_text(message)
             with KeyboardSuppressor() as blocker:
                 if not blocker.active:
-                    note("Could not install the keyboard hook — real keys will "
-                         "leak into this macro", "WARN")
-                pyautogui.press('t')
+                    note(
+                        "Could not install the keyboard hook — real keys will leak into this macro",
+                        "WARN",
+                    )
+                pyautogui.press("t")
                 time.sleep(0.3)
-                pyautogui.hotkey('ctrl', 'v')
+                pyautogui.hotkey("ctrl", "v")
                 time.sleep(0.1)
-                pyautogui.press('enter')
+                pyautogui.press("enter")
         finally:
             restore_clipboard(previous)
 
         if blocker.suppressed:
-            note(f"Suppressed {blocker.suppressed} physical keypress(es) during "
-                 f"'{message}'", "DEBUG")
+            note(
+                f"Suppressed {blocker.suppressed} physical keypress(es) during '{message}'", "DEBUG"
+            )
 
     def go_home(self, log):
         # NB: `case self.STRAYA` (a dotted name) compares against the constant.
@@ -673,7 +717,7 @@ class MinecraftProfile(Profile):
         # variable and always match - so keep server constants dotted here.
         match get_minecraft_server():
             case self.STRAYA:
-                self._send_chat("/is home", log)   # skyblock: island home, not /home
+                self._send_chat("/is home", log)  # skyblock: island home, not /home
             case _:
                 self._send_chat("/home", log)
 
@@ -705,14 +749,18 @@ class MinecraftProfile(Profile):
             return
         # Open in the user's real Firefox so Cloudflare Turnstile isn't tripped;
         # the Tampermonkey userscript fills the username on each page.
-        log(f"Opening {len(urls)} vote page(s) for {server} in Firefox; "
-            f"solve each captcha and click vote.", "INFO")
+        log(
+            f"Opening {len(urls)} vote page(s) for {server} in Firefox; "
+            f"solve each captcha and click vote.",
+            "INFO",
+        )
         open_vote_pages(urls, callback=lambda msg: log(f"[VOTE] {msg}", "INFO"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Log Window Profile
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class LogWindowProfile(Profile):
     WINDOW_KEYWORD = "send_to_window"
@@ -737,6 +785,7 @@ class LogWindowProfile(Profile):
 # Rust Profile  (stub — expand later)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class RustProfile(Profile):
     WINDOW_KEYWORD = "Rust"
     PROCESS_NAMES = frozenset({"rustclient.exe"})
@@ -751,6 +800,7 @@ class RustProfile(Profile):
 # ─────────────────────────────────────────────────────────────────────────────
 # App
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class App:
     PROFILES: list = [
@@ -776,6 +826,7 @@ class App:
     def _register_hotkeys(self):
         mapping = self._collect_all_hotkeys()
         for hk, profiles in mapping.items():
+
             def make_handler(h=hk, ps=profiles):
                 def handler():
                     active = get_active_window_title()
@@ -784,16 +835,17 @@ class App:
                         if profile.is_active_window():
                             profile.dispatch(h, self.log_win.log)
                             return
-                    self.log_win.log(
-                        f"'{h}' fired — no matching profile for '{active}'", "DEBUG"
-                    )
+                    self.log_win.log(f"'{h}' fired — no matching profile for '{active}'", "DEBUG")
+
                 return handler
-            if hk.startswith('*'):
+
+            if hk.startswith("*"):
                 key_name = hk[1:]
                 fn = make_handler()
                 keyboard.on_press_key(key_name, lambda _, f=fn: f())
                 self.log_win.log(
-                    f"Registered '*{key_name}' (any-modifier) → {[p.WINDOW_KEYWORD for p in profiles]}", "DEBUG"
+                    f"Registered '*{key_name}' (any-modifier) → {[p.WINDOW_KEYWORD for p in profiles]}",
+                    "DEBUG",
                 )
             else:
                 keyboard.add_hotkey(hk, make_handler(), suppress=False)

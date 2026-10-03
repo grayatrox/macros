@@ -34,28 +34,19 @@ def test_server_from_equals_form() -> None:
 
 
 def test_non_java_process_is_ignored() -> None:
-    assert (
-        server_from_cmdline("firefox.exe", ["--quickPlayMultiplayer", STRAYA]) is None
-    )
+    assert server_from_cmdline("firefox.exe", ["--quickPlayMultiplayer", STRAYA]) is None
 
 
 def test_flag_without_value_yields_none() -> None:
-    assert (
-        server_from_cmdline("javaw.exe", ["javaw.exe", "--quickPlayMultiplayer"])
-        is None
-    )
+    assert server_from_cmdline("javaw.exe", ["javaw.exe", "--quickPlayMultiplayer"]) is None
 
 
 def test_java_without_quickplay_yields_none() -> None:
     assert server_from_cmdline("javaw.exe", ["javaw.exe", "-jar", "server.jar"]) is None
 
 
-@pytest.mark.parametrize(
-    ("name", "cmdline"), [(None, None), ("javaw.exe", None), (None, [])]
-)
-def test_missing_process_info_yields_none(
-    name: str | None, cmdline: list[str] | None
-) -> None:
+@pytest.mark.parametrize(("name", "cmdline"), [(None, None), ("javaw.exe", None), (None, [])])
+def test_missing_process_info_yields_none(name: str | None, cmdline: list[str] | None) -> None:
     assert server_from_cmdline(name, cmdline) is None
 
 
@@ -63,9 +54,7 @@ def test_missing_process_info_yields_none(
 
 
 class FakeProc:
-    def __init__(
-        self, name: str | None, cmdline: list[str] | None, *, deny: bool = False
-    ):
+    def __init__(self, name: str | None, cmdline: list[str] | None, *, deny: bool = False):
         self._info = {"name": name, "cmdline": cmdline}
         self._deny = deny
 
@@ -224,9 +213,7 @@ def test_vote_server_logs_why_mcvote_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(Macros, "open_vote_pages", None)
-    monkeypatch.setattr(
-        Macros, "mcvote_import_error", ImportError("No module named 'selenium'")
-    )
+    monkeypatch.setattr(Macros, "mcvote_import_error", ImportError("No module named 'selenium'"))
     log = Recorder()
     MinecraftProfile().vote_server(log)
     assert log.levels() == ["WARN"]

@@ -43,19 +43,19 @@ SCRIPT_GLOBS = ("*.py", "*.pyw")
 SELF_PATH = Path(__file__).resolve()
 
 # --- Dark palette -----------------------------------------------------------
-BG = "#1b1d21"        # window background
-SURFACE = "#24272c"   # panels, entries, tree
+BG = "#1b1d21"  # window background
+SURFACE = "#24272c"  # panels, entries, tree
 ELEVATED = "#2f333a"  # hover / headings
 BORDER = "#3a3f47"
 TEXT = "#e4e6eb"
 MUTED = "#9099a5"
-ACCENT = "#4c8dff"    # primary action (blue)
+ACCENT = "#4c8dff"  # primary action (blue)
 ACCENT_HOVER = "#5f9bff"
 GREEN = "#3fa86b"
 GREEN_HOVER = "#4bbd7b"
 RED = "#c8503f"
 RED_HOVER = "#d9614f"
-POLL_MS = 1000        # how often running processes are re-checked
+POLL_MS = 1000  # how often running processes are re-checked
 
 
 def resolve_console_python():
@@ -220,14 +220,23 @@ class PythonLauncherGUI:
         bold = (self.font_family, 10, "bold")
         small = (self.font_family, 9)
 
-        style.configure(".", background=BG, foreground=TEXT, font=base,
-                        bordercolor=BORDER, darkcolor=SURFACE, lightcolor=SURFACE,
-                        troughcolor=SURFACE, focuscolor=BG)
+        style.configure(
+            ".",
+            background=BG,
+            foreground=TEXT,
+            font=base,
+            bordercolor=BORDER,
+            darkcolor=SURFACE,
+            lightcolor=SURFACE,
+            troughcolor=SURFACE,
+            focuscolor=BG,
+        )
         style.configure("TFrame", background=BG)
         style.configure("TLabel", background=BG, foreground=TEXT)
         style.configure("Heading.TLabel", foreground=MUTED, font=small)
-        style.configure("Status.TLabel", background=SURFACE, foreground=MUTED,
-                        font=small, padding=(10, 6))
+        style.configure(
+            "Status.TLabel", background=SURFACE, foreground=MUTED, font=small, padding=(10, 6)
+        )
 
         # Buttons -- flat, no 3D bevel
         for name, fill, hover in (
@@ -236,54 +245,109 @@ class PythonLauncherGUI:
             ("Launch.TButton", ACCENT, ACCENT_HOVER),
             ("Danger.TButton", RED, RED_HOVER),
         ):
-            style.configure(name, background=fill, foreground="#ffffff" if name != "TButton" else TEXT,
-                            bordercolor=fill, darkcolor=fill, lightcolor=fill,
-                            focuscolor=fill, relief="flat", padding=(14, 7), font=base)
-            style.map(name,
-                      background=[("disabled", SURFACE), ("pressed", fill), ("active", hover)],
-                      bordercolor=[("disabled", SURFACE), ("active", hover)],
-                      lightcolor=[("disabled", SURFACE), ("active", hover)],
-                      darkcolor=[("disabled", SURFACE), ("active", hover)],
-                      foreground=[("disabled", MUTED)])
+            style.configure(
+                name,
+                background=fill,
+                foreground="#ffffff" if name != "TButton" else TEXT,
+                bordercolor=fill,
+                darkcolor=fill,
+                lightcolor=fill,
+                focuscolor=fill,
+                relief="flat",
+                padding=(14, 7),
+                font=base,
+            )
+            style.map(
+                name,
+                background=[("disabled", SURFACE), ("pressed", fill), ("active", hover)],
+                bordercolor=[("disabled", SURFACE), ("active", hover)],
+                lightcolor=[("disabled", SURFACE), ("active", hover)],
+                darkcolor=[("disabled", SURFACE), ("active", hover)],
+                foreground=[("disabled", MUTED)],
+            )
         style.configure("Launch.TButton", font=bold, padding=(14, 10))
 
         # Read-only path entry
-        style.configure("Path.TEntry", fieldbackground=SURFACE, foreground=TEXT,
-                        bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER,
-                        insertcolor=TEXT, padding=6)
-        style.map("Path.TEntry",
-                  fieldbackground=[("readonly", SURFACE)],
-                  foreground=[("readonly", TEXT)],
-                  bordercolor=[("focus", ACCENT)])
+        style.configure(
+            "Path.TEntry",
+            fieldbackground=SURFACE,
+            foreground=TEXT,
+            bordercolor=BORDER,
+            lightcolor=BORDER,
+            darkcolor=BORDER,
+            insertcolor=TEXT,
+            padding=6,
+        )
+        style.map(
+            "Path.TEntry",
+            fieldbackground=[("readonly", SURFACE)],
+            foreground=[("readonly", TEXT)],
+            bordercolor=[("focus", ACCENT)],
+        )
 
         # Check / radio indicators
         for name in ("TCheckbutton", "TRadiobutton"):
-            style.configure(name, background=BG, foreground=TEXT, font=base,
-                            indicatorbackground=SURFACE, indicatorforeground=BG,
-                            bordercolor=BORDER, focuscolor=BG, padding=(0, 3))
-            style.map(name,
-                      background=[("active", BG)],
-                      foreground=[("disabled", MUTED)],
-                      indicatorbackground=[("selected", ACCENT), ("active", ELEVATED),
-                                           ("!selected", SURFACE)],
-                      indicatorforeground=[("selected", "#ffffff")])
+            style.configure(
+                name,
+                background=BG,
+                foreground=TEXT,
+                font=base,
+                indicatorbackground=SURFACE,
+                indicatorforeground=BG,
+                bordercolor=BORDER,
+                focuscolor=BG,
+                padding=(0, 3),
+            )
+            style.map(
+                name,
+                background=[("active", BG)],
+                foreground=[("disabled", MUTED)],
+                indicatorbackground=[
+                    ("selected", ACCENT),
+                    ("active", ELEVATED),
+                    ("!selected", SURFACE),
+                ],
+                indicatorforeground=[("selected", "#ffffff")],
+            )
 
         # Treeview -- drop the sunken border, dark rows, readable selection
         style.layout("Dark.Treeview", [("Dark.Treeview.treearea", {"sticky": "nswe"})])
-        style.configure("Dark.Treeview", background=SURFACE, fieldbackground=SURFACE,
-                        foreground=TEXT, borderwidth=0, relief="flat", rowheight=24,
-                        font=base)
-        style.map("Dark.Treeview",
-                  background=[("selected", ACCENT)],
-                  foreground=[("selected", "#ffffff")])
-        style.configure("Dark.Treeview.Heading", background=ELEVATED, foreground=MUTED,
-                        relief="flat", borderwidth=0, padding=(8, 6), font=small)
+        style.configure(
+            "Dark.Treeview",
+            background=SURFACE,
+            fieldbackground=SURFACE,
+            foreground=TEXT,
+            borderwidth=0,
+            relief="flat",
+            rowheight=24,
+            font=base,
+        )
+        style.map(
+            "Dark.Treeview", background=[("selected", ACCENT)], foreground=[("selected", "#ffffff")]
+        )
+        style.configure(
+            "Dark.Treeview.Heading",
+            background=ELEVATED,
+            foreground=MUTED,
+            relief="flat",
+            borderwidth=0,
+            padding=(8, 6),
+            font=small,
+        )
         style.map("Dark.Treeview.Heading", background=[("active", BORDER)])
 
         # Scrollbar
-        style.configure("Dark.Vertical.TScrollbar", background=ELEVATED, troughcolor=SURFACE,
-                        bordercolor=SURFACE, arrowcolor=MUTED, darkcolor=ELEVATED,
-                        lightcolor=ELEVATED, relief="flat", arrowsize=12)
+        style.configure(
+            "Dark.Vertical.TScrollbar",
+            background=ELEVATED,
+            troughcolor=SURFACE,
+            bordercolor=SURFACE,
+            arrowcolor=MUTED,
+            darkcolor=ELEVATED,
+            lightcolor=ELEVATED,
+            relief="flat",
+            arrowsize=12,
+        )
         style.map("Dark.Vertical.TScrollbar", background=[("active", BORDER)])
 
         # Dark-ish standard dialogs where Tk lets us
@@ -301,18 +365,24 @@ class PythonLauncherGUI:
 
         folder_row = ttk.Frame(folder_frame)
         folder_row.pack(fill="x", pady=(4, 0))
-        path_entry = ttk.Entry(folder_row, textvariable=self.selected_folder,
-                               style="Path.TEntry", state="readonly")
+        path_entry = ttk.Entry(
+            folder_row, textvariable=self.selected_folder, style="Path.TEntry", state="readonly"
+        )
         path_entry.pack(side="left", fill="x", expand=True)
-        ttk.Button(folder_row, text="Browse", command=self.pick_folder).pack(side="left", padx=(8, 0))
-        ttk.Button(folder_row, text="Scan", style="Accent.TButton",
-                   command=self.scan_folder).pack(side="left", padx=(8, 0))
+        ttk.Button(folder_row, text="Browse", command=self.pick_folder).pack(
+            side="left", padx=(8, 0)
+        )
+        ttk.Button(folder_row, text="Scan", style="Accent.TButton", command=self.scan_folder).pack(
+            side="left", padx=(8, 0)
+        )
 
         # File tree
         tree_frame = ttk.Frame(self.root, padding=(14, 8))
         tree_frame.pack(fill="both", expand=True)
 
-        ttk.Label(tree_frame, text="PYTHON FILES", style="Heading.TLabel").pack(anchor="w", pady=(0, 4))
+        ttk.Label(tree_frame, text="PYTHON FILES", style="Heading.TLabel").pack(
+            anchor="w", pady=(0, 4)
+        )
 
         tree_body = tk.Frame(tree_frame, bg=BORDER, bd=0, highlightthickness=0)
         tree_body.pack(fill="both", expand=True)
@@ -346,22 +416,38 @@ class PythonLauncherGUI:
         options_frame = ttk.Frame(self.root, padding=(14, 8))
         options_frame.pack(fill="x")
 
-        ttk.Label(options_frame, text="LAUNCH MODE", style="Heading.TLabel").pack(anchor="w", pady=(0, 2))
-        ttk.Radiobutton(options_frame, text="Console", variable=self.launch_mode,
-                        value="console").pack(anchor="w")
-        ttk.Radiobutton(options_frame, text="GUI (no console window)", variable=self.launch_mode,
-                        value="gui").pack(anchor="w")
-        ttk.Checkbutton(options_frame, text="Single instance (don't launch a script twice)",
-                        variable=self.single_instance).pack(anchor="w", pady=(8, 0))
+        ttk.Label(options_frame, text="LAUNCH MODE", style="Heading.TLabel").pack(
+            anchor="w", pady=(0, 2)
+        )
+        ttk.Radiobutton(
+            options_frame, text="Console", variable=self.launch_mode, value="console"
+        ).pack(anchor="w")
+        ttk.Radiobutton(
+            options_frame, text="GUI (no console window)", variable=self.launch_mode, value="gui"
+        ).pack(anchor="w")
+        ttk.Checkbutton(
+            options_frame,
+            text="Single instance (don't launch a script twice)",
+            variable=self.single_instance,
+        ).pack(anchor="w", pady=(8, 0))
 
         # Actions
         launch_frame = ttk.Frame(self.root, padding=(14, 8))
         launch_frame.pack(fill="x")
-        self.launch_button = ttk.Button(launch_frame, text="Launch Selected File",
-                                        style="Launch.TButton", command=self.launch_file)
+        self.launch_button = ttk.Button(
+            launch_frame,
+            text="Launch Selected File",
+            style="Launch.TButton",
+            command=self.launch_file,
+        )
         self.launch_button.pack(side="left", fill="x", expand=True)
-        self.stop_button = ttk.Button(launch_frame, text="Stop", style="Danger.TButton",
-                                      command=self.stop_selected, state="disabled")
+        self.stop_button = ttk.Button(
+            launch_frame,
+            text="Stop",
+            style="Danger.TButton",
+            command=self.stop_selected,
+            state="disabled",
+        )
         self.stop_button.pack(side="left", padx=(8, 0))
 
         # Status bar
@@ -424,11 +510,13 @@ class PythonLauncherGUI:
             return
 
         for dir_name in sorted(file_dict):
-            dir_item = self.tree.insert("", "end", text=f"  {dir_name}", open=True,
-                                        values=("", ""), tags=("dir",))
+            dir_item = self.tree.insert(
+                "", "end", text=f"  {dir_name}", open=True, values=("", ""), tags=("dir",)
+            )
             for file_name, file_path in sorted(file_dict[dir_name]):
-                item = self.tree.insert(dir_item, "end", text=f"  {file_name}",
-                                        values=(file_path, ""))
+                item = self.tree.insert(
+                    dir_item, "end", text=f"  {file_name}", values=(file_path, "")
+                )
                 self.items_by_path[file_path] = item
 
         self.refresh_status_cells()
@@ -474,7 +562,8 @@ class PythonLauncherGUI:
         running = bool(self.processes.get(self.selected_file))
         self.stop_button.config(state="normal" if running else "disabled")
         self.launch_button.config(
-            text="Restart Selected File" if running and self.single_instance.get()
+            text="Restart Selected File"
+            if running and self.single_instance.get()
             else "Launch Selected File"
         )
 
@@ -585,11 +674,13 @@ class PythonLauncherGUI:
             if sys.platform != "win32":
                 proc = subprocess.Popen([PYTHON_EXE, path])
             elif self.launch_mode.get() == "gui":
-                proc = subprocess.Popen([PYTHON_EXE, path],
-                                        creationflags=subprocess.CREATE_NO_WINDOW)
+                proc = subprocess.Popen(
+                    [PYTHON_EXE, path], creationflags=subprocess.CREATE_NO_WINDOW
+                )
             else:
-                proc = subprocess.Popen([PYTHON_EXE, path],
-                                        creationflags=subprocess.CREATE_NEW_CONSOLE)
+                proc = subprocess.Popen(
+                    [PYTHON_EXE, path], creationflags=subprocess.CREATE_NEW_CONSOLE
+                )
         except Exception as e:
             messagebox.showerror("Error", f"Failed to launch file: {e}")
             return
@@ -608,6 +699,7 @@ class PythonLauncherGUI:
 
 
 # --- Error reporting --------------------------------------------------------
+
 
 def format_error(exc):
     import traceback

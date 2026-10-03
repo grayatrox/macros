@@ -29,9 +29,7 @@ class Opened:
 @pytest.fixture
 def opened(monkeypatch: pytest.MonkeyPatch) -> Opened:
     record = Opened()
-    monkeypatch.setattr(
-        subprocess, "Popen", lambda argv: record.popen.append(list(argv))
-    )
+    monkeypatch.setattr(subprocess, "Popen", lambda argv: record.popen.append(list(argv)))
     monkeypatch.setattr(webbrowser, "open", record.browser.append)
     monkeypatch.setattr(mcvote, "FIREFOX_PATHS", [])
     return record
@@ -96,9 +94,7 @@ def test_open_vote_pages_works_without_selenium(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # Only the legacy vote() flow needs Selenium; it is an optional extra.
-    for name in [
-        m for m in sys.modules if m == "selenium" or m.startswith("selenium.")
-    ]:
+    for name in [m for m in sys.modules if m == "selenium" or m.startswith("selenium.")]:
         monkeypatch.delitem(sys.modules, name)
     monkeypatch.setitem(sys.modules, "selenium", None)  # makes `import selenium` fail
     monkeypatch.delitem(sys.modules, "mcvote", raising=False)

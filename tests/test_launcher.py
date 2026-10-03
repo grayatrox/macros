@@ -55,9 +55,7 @@ def _find(launcher: ModuleType, folder: Path) -> list[str]:
     return sorted(p.relative_to(folder).as_posix() for p in found)
 
 
-def test_find_scripts_lists_py_and_pyw_recursively(
-    launcher: ModuleType, tmp_path: Path
-) -> None:
+def test_find_scripts_lists_py_and_pyw_recursively(launcher: ModuleType, tmp_path: Path) -> None:
     _touch(tmp_path / "a.py")
     _touch(tmp_path / "gui.pyw")
     _touch(tmp_path / "sub" / "b.py")
@@ -65,9 +63,7 @@ def test_find_scripts_lists_py_and_pyw_recursively(
     assert _find(launcher, tmp_path) == ["a.py", "gui.pyw", "sub/b.py"]
 
 
-@pytest.mark.parametrize(
-    "skip", ["__pycache__", ".venv", "venv", ".git", "site-packages"]
-)
+@pytest.mark.parametrize("skip", ["__pycache__", ".venv", "venv", ".git", "site-packages"])
 def test_find_scripts_skips_noise_directories(
     launcher: ModuleType, tmp_path: Path, skip: str
 ) -> None:
