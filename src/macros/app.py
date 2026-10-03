@@ -10,8 +10,8 @@ A persistent background app that:
   • Detects the active window and dispatches to the matching profile
   • Streams events to a toggleable dark-themed GUI log window
 
-Dependencies (pinned, hashed - see pyproject.toml):
-    pip install --require-hashes -r requirements.lock
+Dependencies are pinned and hash-checked in requirements.lock, and installed
+automatically on first start (macros.bootstrap).
 """
 
 import base64
@@ -30,30 +30,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Protocol, Self, TypedDict
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Third-party imports
-# ─────────────────────────────────────────────────────────────────────────────
-
-try:
-    import keyboard
-    import psutil
-    import pyautogui
-    import pystray
-    import win32clipboard
-    import win32gui
-    import win32process
-    from PIL import Image, ImageDraw
-except ImportError as exc:
-    # Under pythonw (the launcher's GUI mode) there is no console for the
-    # traceback, so say what is missing and how to fix it in a dialog.
-    ctypes.windll.user32.MessageBoxW(
-        0,
-        f"{exc}\n\nInstall the pinned dependencies from the Macros folder:\n\n"
-        "  pip install --require-hashes -r requirements.lock",
-        "send_to_window — missing dependency",
-        0x10,  # MB_ICONERROR
-    )
-    raise
+# Third-party: installed on first start by macros.bootstrap, which runs before
+# this module is imported (see macros.__main__).
+import keyboard
+import psutil
+import pyautogui
+import pystray
+import win32clipboard
+import win32gui
+import win32process
+from PIL import Image, ImageDraw
 
 open_vote_pages: Callable[..., int] | None
 mcvote_import_error: ImportError | None = None

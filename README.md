@@ -33,16 +33,29 @@ here.
 
 ## Install
 
-Windows and Python 3.12 or newer. From the repository root:
+Windows and Python 3.12 or newer. To just use the app, run it (see
+[Run](#run)). On first start it installs its own components into
+`%LOCALAPPDATA%\Macros\deps-py312` (one folder per Python version), showing a
+small progress window. Your Python installation is not modified.
+
+- **Pinned.** Every download is checked against a hash in `requirements.lock`.
+  A few packages (pyautogui and friends) only ship source code, so they are
+  built against the setuptools pinned in `requirements-build.lock`.
+- **Updated.** Editing the lock reinstalls on the next start.
+- **Failures.** If the install fails, a dialog shows pip's reason and any
+  earlier install is kept.
+
+To work on the code, make a virtualenv with the dev tools. From the repository
+root:
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\python tools/tasks.py setup
 ```
 
-`setup` installs the pinned, hash-checked dependencies from
-`requirements-dev.lock`, which includes the dev tools. To install only what the
-app needs at runtime, use `.venv\Scripts\python -m pip install --require-hashes -r requirements.lock`.
+`setup` installs the pinned, hash-checked `requirements-dev.lock`. In that
+environment the app finds everything already installed and skips the
+first-start install.
 
 For the vote helper, install [Tampermonkey](https://www.tampermonkey.net/) in
 Firefox and add `strayamc_vote_autofill.user.js` to it.
@@ -58,10 +71,11 @@ $env:PYTHONPATH = "src"; .venv\Scripts\python -m macros.mcvote
 ## Run
 
 ```powershell
-.venv\Scripts\python tools/tasks.py run
+python Macros.py
 ```
 
-This starts `Macros.py`. Its tray icon has Show / Hide Log, Reload and Quit. If
+Or double-click `Macros.py`. From the dev virtualenv, use
+`.venv\Scripts\python tools/tasks.py run`. This starts the app. Its tray icon has Show / Hide Log, Reload and Quit. If
 a copy is already running, a new one says so and exits. You can also start any
 of the scripts from `launcher.pyw`: double-click it, or run
 `.venv\Scripts\pythonw launcher.pyw`.

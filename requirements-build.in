@@ -1,0 +1,5 @@
+# Build backend for the dependencies that publish only sdists (pyautogui and
+# friends). The first-start bootstrap installs this, hash-pinned, before
+# building them, so no unpinned setuptools is fetched. Compiled into
+# requirements-build.lock by tools/lock.py.
+setuptools>=75

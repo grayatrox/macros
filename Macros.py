@@ -10,6 +10,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from macros.app import main  # needs src on sys.path, added above
+from macros.__main__ import main  # needs src on sys.path, added above
 
 raise SystemExit(main())

@@ -1,4 +1,8 @@
-"""Regenerate ``requirements.lock`` and ``requirements-dev.lock`` from ``pyproject.toml``.
+"""Regenerate the hashed lock files.
+
+``requirements.lock`` and ``requirements-dev.lock`` come from ``pyproject.toml``;
+``requirements-build.lock`` (the build backend the first-start bootstrap needs
+for sdist-only dependencies) comes from ``requirements-build.in``.
 
 Both are hashed, so ``pip install --require-hashes`` refuses any download that
 does not match a digest committed here. ``requirements-dev.lock`` is constrained
@@ -24,6 +28,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = ROOT / "pyproject.toml"
 RUNTIME_LOCK = ROOT / "requirements.lock"
 DEV_LOCK = ROOT / "requirements-dev.lock"
+BUILD_IN = ROOT / "requirements-build.in"
+BUILD_LOCK = ROOT / "requirements-build.lock"
 
 
 def _rel(path: Path) -> str:
@@ -35,7 +41,9 @@ def _rel(path: Path) -> str:
     return path.relative_to(ROOT).as_posix()
 
 
-def _compile(*, extra: str | None, constraint: Path | None, output: Path) -> int:
+def _compile(
+    *, extra: str | None, constraint: Path | None, output: Path, source: Path = PYPROJECT
+) -> int:
     argv = [
         sys.executable,
         "-m",
@@ -53,7 +61,7 @@ def _compile(*, extra: str | None, constraint: Path | None, output: Path) -> int
         argv += ["--extra", extra]
     if constraint:
         argv += ["--constraint", _rel(constraint)]
-    argv.append(_rel(PYPROJECT))
+    argv.append(_rel(source))
 
     print(" ".join(argv))
     try:
@@ -74,6 +82,10 @@ def main() -> int:
     if (status := _compile(extra="dev", constraint=RUNTIME_LOCK, output=DEV_LOCK)) != 0:
         return status
     print(f"Wrote {_rel(DEV_LOCK)}")
+
+    if (status := _compile(extra=None, constraint=None, output=BUILD_LOCK, source=BUILD_IN)) != 0:
+        return status
+    print(f"Wrote {_rel(BUILD_LOCK)}")
     return 0
 
 
