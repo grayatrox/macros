@@ -28,6 +28,9 @@ dev = [
     "mypy>=2.3,<3",
     "uv>=0.12,<0.13",       # tools/lock.py
     "selenium>=4.32,<5",    # so mypy and tests can see mcvote's legacy flow
+    "types-psutil",
+    "types-pyautogui",
+    "types-pywin32",
 ]
 
 [tool.pytest.ini_options]
@@ -36,3 +39,55 @@ testpaths = ["tests"]
 # The scripts live at the repo root, not in a package.
 pythonpath = ["."]
 addopts = ["--strict-markers", "--strict-config", "-ra"]
+
+# ---------------------------------------------------------------------------
+# Ruff - lint + format. Same rule selection as the owner's other Python projects.
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-include = ["*.pyw"]  # launcher.pyw; ruff skips .pyw by default
+# Recipe Calc/ is a separate OpenProject project with its own tooling decisions.
+extend-exclude = ["Recipe Calc"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "A",         # builtins shadowing
+    "C4",        # comprehensions
+    "DTZ",       # naive-datetime misuse
+    "PTH",       # use pathlib, never os.path
+    "RET",       # return simplification
+    "SIM",       # simplify
+    "ARG",       # unused arguments
+    "PL",        # pylint subset
+    "RUF",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "PLR2004", # magic values are the point of a test
+    "PLC0415", # local imports keep a test's dependencies next to the test
+    "ARG001",  # fakes must match a real signature, unused args included
+    "ARG002",  # ditto, for methods on fake classes
+    "ARG005",  # ditto, for lambdas standing in for real callables
+]
+
+# ---------------------------------------------------------------------------
+# Mypy - strict.
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+files = ["Macros.py", "launcher.pyw", "mcvote.py", "tools", "tests"]
+
+[[tool.mypy.overrides]]
+# Neither ships type information and typeshed has no stubs for them.
+module = ["pystray", "keyboard"]
+ignore_missing_imports = true
