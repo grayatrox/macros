@@ -86,6 +86,9 @@ python_version = "3.12"
 strict = true
 warn_unreachable = true
 files = ["Macros.py", "launcher.pyw", "mcvote.py", "tools", "tests"]
+# tools/ and tests/ are namespace packages rooted at the repo, so the tests
+# `from tools import tasks` and tools/tasks.py resolve to one module name.
+explicit_package_bases = true
 # types-pywin32 leaves some win32clipboard functions unannotated (e.g.
 # CloseClipboard, SetClipboardData). The gap is in the third-party stubs, so
 # exempt calls into that module only; our own code stays fully checked. The

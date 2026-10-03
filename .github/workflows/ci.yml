@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    # Windows only: Macros.py uses pywin32 and user32/kernel32 through ctypes,
+    # and the tests create real named mutexes.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+
+      # Every step calls tools/tasks.py, the same verbs the README documents,
+      # so CI and a developer run identical commands.
+      - name: Setup
+        run: python tools/tasks.py setup
+
+      - name: Lint and format check
+        run: python tools/tasks.py lint
+
+      - name: Types
+        run: python tools/tasks.py typecheck
+
+      - name: Tests
+        run: python tools/tasks.py test
