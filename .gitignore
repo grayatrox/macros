@@ -22,3 +22,6 @@ geckodriver.exe
 
 # Personal settings (username, vote pages); commit settings.example.json instead
 settings.json
+
+# Project-scope MCP config, generated per machine by ~/.claude hooks
+/.mcp.json
