@@ -205,3 +205,32 @@ def test_pip_failure_reaches_the_user_with_pips_reason(
 
 def argv_value(argv: list[str], flag: str) -> str:
     return argv[argv.index(flag) + 1]
+
+
+# ── install_lock: the same install, for callers with their own UI (#666) ─────
+
+
+def test_install_lock_installs_a_stale_folder_once(lock: Path, target: Path) -> None:
+    world = World()
+    assert not bootstrap.is_current(lock, target)
+    assert bootstrap.install_lock(lock, target, world.install) is True
+    assert bootstrap.is_current(lock, target)
+    assert bootstrap.install_lock(lock, target, world.install) is False
+    assert len(world.installs) == 1
+    assert (target / "keyboard.py").is_file()
+
+
+def test_install_lock_failure_keeps_the_previous_install(lock: Path, target: Path) -> None:
+    bootstrap.install_lock(lock, target, World().install)
+    old_marker = (target / MARKER_NAME).read_text(encoding="utf-8")
+    lock.write_text("pystray==0.19.6 --hash=sha256:bbbb\n", encoding="utf-8")
+    world = World()
+    world.install_fails = True
+    with pytest.raises(BootstrapError, match="try again"):
+        bootstrap.install_lock(lock, target, world.install)
+    assert (target / MARKER_NAME).read_text(encoding="utf-8") == old_marker
+
+
+def test_install_lock_reports_a_missing_lock(tmp_path: Path, target: Path) -> None:
+    with pytest.raises(BootstrapError, match="lock file"):
+        bootstrap.install_lock(tmp_path / "absent.lock", target, World().install)

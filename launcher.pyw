@@ -19,8 +19,10 @@ considered "alive" if that specific child is still running -- no PID reuse races
 import contextlib
 import ctypes
 import json
+import os
 import subprocess
 import sys
+import threading
 import tomllib
 import traceback
 from pathlib import Path, PurePath
@@ -30,6 +32,7 @@ from typing import Any, NamedTuple, override
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from macros.bootstrap import BootstrapError, ensure_dependencies  # needs src on sys.path
+from macros.plugin_deps import PluginDeps, PluginDepsError  # stdlib only, like bootstrap
 
 MB_ICONERROR = 0x10
 
@@ -363,7 +366,11 @@ def ask_directory(parent: QtWidgets.QWidget | None, title: str, start: str) -> s
 
 
 class PythonLauncherGUI(QtWidgets.QWidget):
-    def __init__(self) -> None:
+    # A background dependency install's outcome, carried back to the GUI thread:
+    # None on success, else the message saying why it failed.
+    deps_install_done = QtCore.Signal(object)
+
+    def __init__(self, deps: PluginDeps | None = None) -> None:
         super().__init__()
         self.setWindowTitle("Python File Launcher")
         self.resize(760, 620)
@@ -382,6 +389,17 @@ class PythonLauncherGUI(QtWidgets.QWidget):
         self.processes: dict[str, list[subprocess.Popen[bytes]]] = {}
         # path -> tree row, so status cells can be updated in place
         self.items_by_path: dict[str, QtWidgets.QTreeWidgetItem] = {}
+
+        # Listed apps' declared dependencies; see src/macros/plugin_deps.py.
+        self.deps = deps or PluginDeps()
+        # Whether launched apps get the private install folder on PYTHONPATH
+        self.deps_active = self.deps.active_at_start()
+        self.deps_installing = False
+        # path -> the app's folder (where its pyproject.toml is), for every listed app
+        self.app_dirs: dict[str, Path] = {}
+        # Listed apps that cannot launch until the running install finishes
+        self.waiting_for_deps: set[str] = set()
+        self.deps_install_done.connect(self.on_deps_installed)
 
         self.setup_ui()
 
@@ -565,6 +583,9 @@ class PythonLauncherGUI(QtWidgets.QWidget):
         self.items_by_path.clear()
 
         scan = find_apps(folder)
+        # An app's folder is the one directly inside the scanned folder
+        self.app_dirs = {str(s): folder / s.relative_to(folder).parts[0] for s in scan.scripts}
+        self.waiting_for_deps.clear()
 
         # Organise files by directory
         file_dict: dict[str, list[tuple[str, str]]] = {}
@@ -598,12 +619,112 @@ class PythonLauncherGUI(QtWidgets.QWidget):
         self.refresh_status_cells()
         self.set_status(f"Found {count} app(s). Select one to launch.")
 
+        if dep_problems := self.check_dependencies():
+            show_warning(
+                self, "Some app dependencies were not installed", "\n\n".join(dep_problems)
+            )
+
         # Re-select whatever was last launched, if it is still around
         last_file = self.settings.get("last_file", "")
         if last_file in self.items_by_path:
             item = self.items_by_path[last_file]
             self.tree.setCurrentItem(item)
             self.tree.scrollToItem(item)
+
+    # --- Dependencies --------------------------------------------------------
+
+    def check_dependencies(self) -> list[str]:
+        """Check every listed app's declared dependencies; install any that are missing.
+
+        The check reads files only. If an app is missing a pinned dependency,
+        one install runs on a worker thread and the app cannot be launched
+        until it finishes. Returns one message per app whose dependencies are
+        not pinned in the lock or could not be checked; those are never installed.
+        """
+        problems: list[str] = []
+        needing: list[str] = []
+        for path, app_dir in self.app_dirs.items():
+            try:
+                status = self.deps.status(app_dir, active=self.deps_active)
+            except PluginDepsError as e:
+                problems.append(f"{app_dir.name}: its dependencies could not be checked. {e}")
+                continue
+            if status.unpinned:
+                problems.append(
+                    f"{app_dir.name} needs {', '.join(status.unpinned)}, not pinned in "
+                    f"{self.deps.lock.name}, so not installed. Add it to the root "
+                    "pyproject.toml and run python tools/lock.py."
+                )
+            if status.missing:
+                needing.append(path)
+        if needing:
+            self.start_deps_install(needing)
+        return problems
+
+    def start_deps_install(self, paths: list[str]) -> None:
+        """Hold ``paths`` back until an install finishes, starting one if none is running."""
+        self.waiting_for_deps.update(paths)
+        self.refresh_status_cells()
+        self.update_buttons()
+        names = ", ".join(sorted(Path(p).name for p in self.waiting_for_deps))
+        self.set_status(f"Installing dependencies for {names}...")
+        if self.deps_installing:
+            return
+        self.deps_installing = True
+        worker = threading.Thread(
+            target=self.install_deps_worker, args=(self.deps_active,), daemon=True
+        )
+        worker.start()
+
+    def install_deps_worker(self, active: bool) -> None:
+        """Run on a worker thread: pip can take minutes, the window must stay live."""
+        try:
+            self.deps.ensure_installed(active=active)
+        except PluginDepsError as e:
+            self.deps_install_done.emit(str(e))
+        except Exception as e:
+            # Nothing else reports for this thread; an unexpected failure must not vanish
+            self.deps_install_done.emit(f"Unexpected error while installing:\n\n{format_error(e)}")
+        else:
+            self.deps_install_done.emit(None)
+
+    def on_deps_installed(self, error: object) -> None:
+        """Back on the GUI thread: re-check the waiting apps, or report the failure."""
+        self.deps_installing = False
+        waiting = sorted(self.waiting_for_deps)
+        self.waiting_for_deps.clear()
+        self.refresh_status_cells()
+        self.update_buttons()
+        if error is not None:
+            self.set_status("Dependency install failed.")
+            show_error(self, "Dependencies not installed", str(error))
+            return
+
+        self.deps_active = True
+        still_missing: list[str] = []
+        for path in waiting:
+            app_dir = self.app_dirs.get(path)
+            if app_dir is None:  # no longer listed: the folder was changed meanwhile
+                continue
+            try:
+                missing = self.deps.status(app_dir, active=True).missing
+            except PluginDepsError as e:
+                still_missing.append(f"{app_dir.name}: {e}")
+                continue
+            if missing:
+                still_missing.append(f"{app_dir.name}: {', '.join(missing)}")
+        if still_missing:
+            self.set_status("Some dependencies are still missing.")
+            show_error(
+                self,
+                "Dependencies still missing",
+                f"These are still missing after installing {self.deps.lock.name}:\n\n"
+                + "\n".join(still_missing)
+                + f"\n\nInstall folder: {self.deps.target}",
+            )
+            return
+        names = ", ".join(Path(p).name for p in waiting)
+        self.set_status(f"Dependencies installed for {names}." if names else "Ready")
 
     def reject_folder(self, message: str) -> None:
         # Revert before the dialog: it takes the focus, and the box's FocusOut
@@ -672,7 +793,7 @@ class PythonLauncherGUI(QtWidgets.QWidget):
         for path, item in self.items_by_path.items():
             procs = self.processes.get(path)
             if not procs:
-                text = ""
+                text = "installing..." if path in self.waiting_for_deps else ""
             elif len(procs) == 1:
                 text = f"PID {procs[0].pid}"
             else:
@@ -734,6 +855,15 @@ class PythonLauncherGUI(QtWidgets.QWidget):
 
         name = Path(path).name
 
+        if path in self.waiting_for_deps:
+            show_warning(
+                self,
+                "Still installing",
+                f"{name}'s dependencies are still being installed. "
+                "Launch it once the install has finished.",
+            )
+            return
+
         # Single-instance check: we only ever compare against PIDs we started
         # ourselves, so a recycled PID can never be mistaken for a live script.
         if self.single_instance.isChecked():
@@ -753,16 +883,18 @@ class PythonLauncherGUI(QtWidgets.QWidget):
 
         self.save_settings()
 
+        # None inherits ours; otherwise it puts the installed dependencies in reach
+        env = self.deps.child_env(active=self.deps_active, environ=os.environ)
         try:
             if sys.platform != "win32":
-                proc = subprocess.Popen([PYTHON_EXE, path])
+                proc = subprocess.Popen([PYTHON_EXE, path], env=env)
             elif self.launch_mode() == "gui":
                 proc = subprocess.Popen(
-                    [PYTHON_EXE, path], creationflags=subprocess.CREATE_NO_WINDOW
+                    [PYTHON_EXE, path], env=env, creationflags=subprocess.CREATE_NO_WINDOW
                 )
             else:
                 proc = subprocess.Popen(
-                    [PYTHON_EXE, path], creationflags=subprocess.CREATE_NEW_CONSOLE
+                    [PYTHON_EXE, path], env=env, creationflags=subprocess.CREATE_NEW_CONSOLE
                 )
         except Exception as e:
             show_error(self, "Error", f"Failed to launch file: {e}")

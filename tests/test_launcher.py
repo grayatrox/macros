@@ -1,4 +1,5 @@
-"""Tests for launcher.pyw's interpreter choice, script discovery and folder box."""
+"""Tests for launcher.pyw's interpreter choice, script discovery, folder box and
+installing each app's dependencies."""
 
 from __future__ import annotations
 
@@ -6,6 +7,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +17,8 @@ from typing import Any
 
 import pytest
 from PySide6 import QtCore, QtGui, QtTest, QtWidgets
+
+from macros.plugin_deps import PluginDeps, read_pins
 
 
 def _touch(path: Path) -> Path:
@@ -222,12 +227,55 @@ def qapp() -> QtWidgets.QApplication:
     return app
 
 
+class _Pip:
+    """Stands in for pip: 'installs' the lock's pins as package metadata.
+
+    ``release`` can hold an install open, and ``fail`` / ``provides`` make it
+    fail or install nothing. Never touches the network.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[Path] = []
+        self.release = threading.Event()
+        self.release.set()
+        self.fail = False
+        self.provides = True
+
+    def __call__(self, lock: Path, target: Path) -> None:
+        self.calls.append(lock)
+        assert self.release.wait(10), "the test never released the install"
+        if self.fail:
+            raise subprocess.CalledProcessError(1, ["pip"], output="ERROR: no network")
+        target.mkdir(parents=True, exist_ok=True)
+        if self.provides:
+            for name, version in read_pins(lock).items():
+                info = target / f"{name}-{version}.dist-info"
+                info.mkdir()
+                (info / "METADATA").write_text(
+                    f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n",
+                    encoding="utf-8",
+                )
+
+
+@pytest.fixture
+def pip() -> _Pip:
+    return _Pip()
+
+
+@pytest.fixture
+def deps(tmp_path: Path, pip: _Pip) -> PluginDeps:
+    lock = tmp_path / "requirements.lock"
+    lock.write_text("fakepkg==1.0 \\\n    --hash=sha256:aaaa\n", encoding="utf-8")
+    return PluginDeps(lock=lock, target=tmp_path / "deps-py312", install=pip)
+
+
 @pytest.fixture
 def window(
     launcher: ModuleType,
     qapp: QtWidgets.QApplication,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    deps: PluginDeps,
 ) -> Iterator[_Window]:
     start = tmp_path / "start"
     _app(start / "first", "first.py")
@@ -239,7 +287,7 @@ def window(
     warnings: list[str] = []
     monkeypatch.setattr(launcher, "show_warning", lambda _parent, _title, msg: warnings.append(msg))
 
-    app = launcher.PythonLauncherGUI()
+    app = launcher.PythonLauncherGUI(deps=deps)
     try:
         (entry,) = app.findChildren(QtWidgets.QLineEdit)
         yield _Window(app, entry, errors, warnings)
@@ -258,12 +306,16 @@ def test_with_no_saved_folder_the_repos_plugins_dir_is_scanned(
     errors: list[str] = []
     monkeypatch.setattr(launcher, "show_error", lambda _parent, _title, msg: errors.append(msg))
     monkeypatch.setattr(launcher, "show_warning", lambda _parent, _title, msg: errors.append(msg))
-    app = launcher.PythonLauncherGUI()
+    # The real lock: this environment already satisfies both apps, so nothing installs.
+    pip = _Pip()
+    app = launcher.PythonLauncherGUI(deps=PluginDeps(target=tmp_path / "deps", install=pip))
     try:
         (entry,) = app.findChildren(QtWidgets.QLineEdit)
         assert entry.text() == str(ROOT / "plugins")
         assert _listed(_Window(app, entry, errors, [])) == ["Macros.py", "Recpe_Calc.py"]
         assert errors == []
+        assert not app.deps_installing
+        assert pip.calls == []
     finally:
         app.poll_timer.stop()
         app.deleteLater()
@@ -481,3 +533,154 @@ def test_a_failed_first_start_install_is_shown_and_exits(
         launcher.bootstrap()
     assert exc.value.code == 1
     assert shown == ["no network"]
+
+
+# ── dependencies ─────────────────────────────────────────────────────────────
+
+
+def _needy(folder: Path, *requirements: str) -> str:
+    """An app whose pyproject.toml declares ``requirements``; returns its script."""
+    _app(folder, f"{folder.name}.py")
+    listed = ", ".join(f'"{r}"' for r in requirements)
+    (folder / "pyproject.toml").write_text(
+        f"[project]\ndependencies = [{listed}]\n", encoding="utf-8"
+    )
+    return str(folder / f"{folder.name}.py")
+
+
+def _wait_for_install(app: Any) -> None:
+    """Let the GUI thread receive the worker's result."""
+    deadline = time.monotonic() + 10
+    while app.deps_installing:
+        assert time.monotonic() < deadline, "the install never reported back"
+        QtCore.QCoreApplication.processEvents(QtCore.QEventLoop.ProcessEventsFlag.AllEvents, 50)
+
+
+@pytest.fixture
+def launched(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """The keyword arguments of every Popen the launcher makes."""
+    calls: list[dict[str, Any]] = []
+
+    def popen(_args: Any, **kwargs: Any) -> _FakeProc:
+        calls.append(kwargs)
+        return _FakeProc()
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    return calls
+
+
+def test_a_missing_dependency_installs_in_the_background_then_the_app_launches(
+    window: _Window,
+    tmp_path: Path,
+    pip: _Pip,
+    deps: PluginDeps,
+    launched: list[dict[str, Any]],
+) -> None:
+    pip.release.clear()
+    script = _needy(tmp_path / "start" / "needy", "fakepkg>=1")
+    window.app.commit_folder()
+
+    item = window.app.items_by_path[script]
+    assert item.text(1) == "installing..."
+    window.app.tree.setCurrentItem(item)
+    window.app.launch_button.click()
+    assert launched == []
+    assert "still being installed" in window.warnings[-1]
+
+    pip.release.set()
+    _wait_for_install(window.app)
+    assert pip.calls == [deps.lock]
+    assert window.errors == []
+    assert item.text(1) == ""
+
+    window.app.launch_button.click()
+    (kwargs,) = launched
+    assert kwargs["env"]["PYTHONPATH"].split(os.pathsep)[0] == str(deps.target)
+
+
+def test_apps_with_nothing_missing_launch_without_waiting(
+    window: _Window, tmp_path: Path, pip: _Pip, launched: list[dict[str, Any]]
+) -> None:
+    pip.release.clear()
+    _needy(tmp_path / "start" / "needy", "fakepkg>=1")
+    window.app.commit_folder()
+
+    first = window.app.items_by_path[str(tmp_path / "start" / "first" / "first.py")]
+    assert first.text(1) == ""
+    window.app.tree.setCurrentItem(first)
+    window.app.launch_button.click()
+    (kwargs,) = launched
+    assert kwargs["env"] is None  # nothing installed yet, so nothing to add
+    pip.release.set()
+    _wait_for_install(window.app)
+
+
+def test_rescanning_during_an_install_does_not_start_another(
+    window: _Window, tmp_path: Path, pip: _Pip
+) -> None:
+    pip.release.clear()
+    _needy(tmp_path / "start" / "needy", "fakepkg>=1")
+    window.app.commit_folder()
+    window.app.commit_folder()
+    pip.release.set()
+    _wait_for_install(window.app)
+    assert len(pip.calls) == 1
+    assert window.errors == []
+
+
+def test_a_satisfied_app_is_not_reinstalled_on_the_next_scan(
+    window: _Window, tmp_path: Path, pip: _Pip
+) -> None:
+    _needy(tmp_path / "start" / "needy", "fakepkg>=1")
+    window.app.commit_folder()
+    _wait_for_install(window.app)
+    window.app.commit_folder()
+    assert not window.app.deps_installing
+    assert len(pip.calls) == 1
+
+
+def test_a_dependency_the_lock_does_not_pin_is_reported_and_never_installed(
+    window: _Window, tmp_path: Path, pip: _Pip
+) -> None:
+    script = _needy(tmp_path / "start" / "needy", "requests>=2")
+    window.app.commit_folder()
+    (warning,) = window.warnings
+    assert "needy needs requests>=2" in warning
+    assert "tools/lock.py" in warning
+    assert not window.app.deps_installing
+    assert pip.calls == []
+    assert window.app.items_by_path[script].text(1) == ""
+
+
+def test_an_unreadable_pyproject_is_reported(window: _Window, tmp_path: Path, pip: _Pip) -> None:
+    _app(tmp_path / "start" / "broken", "broken.py")
+    (tmp_path / "start" / "broken" / "pyproject.toml").write_text("[project\n", encoding="utf-8")
+    window.app.commit_folder()
+    (warning,) = window.warnings
+    assert "broken: its dependencies could not be checked" in warning
+    assert pip.calls == []
+
+
+def test_a_failed_install_is_shown_and_the_app_is_no_longer_held(
+    window: _Window, tmp_path: Path, pip: _Pip
+) -> None:
+    pip.fail = True
+    script = _needy(tmp_path / "start" / "needy", "fakepkg>=1")
+    window.app.commit_folder()
+    _wait_for_install(window.app)
+    (error,) = window.errors
+    assert "ERROR: no network" in error
+    assert window.app.items_by_path[script].text(1) == ""
+    assert not window.app.deps_active
+
+
+def test_a_dependency_still_missing_after_install_is_reported(
+    window: _Window, tmp_path: Path, pip: _Pip, deps: PluginDeps
+) -> None:
+    pip.provides = False
+    _needy(tmp_path / "start" / "needy", "fakepkg>=1")
+    window.app.commit_folder()
+    _wait_for_install(window.app)
+    (error,) = window.errors
+    assert "needy: fakepkg==1.0" in error
+    assert str(deps.target) in error

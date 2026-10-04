@@ -153,3 +153,12 @@ Everything else is in the source:
   `docs/adr/0001-launcher-app-manifests.md` and
   `docs/adr/0002-apps-live-in-plugins.md`. To add an app, give it a folder in
   `plugins/` with a manifest and a `pyproject.toml` declaring its dependencies.
+
+  After each scan the launcher checks every listed app's `[project].dependencies`
+  against the versions pinned in `requirements.lock`. If any are missing, it
+  installs the hash-pinned lock into `%LOCALAPPDATA%\Macros\deps-py312` in the
+  background, the same install as the first start. The app shows
+  *installing...* and launches once the install is done. Apps started from
+  the launcher get that folder on `PYTHONPATH`. A dependency the lock does not
+  pin is reported, not installed: add it to the root `pyproject.toml` and run
+  `python tools/lock.py`. See `docs/adr/0004-plugin-dependency-install.md`.

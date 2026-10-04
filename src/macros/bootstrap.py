@@ -179,6 +179,61 @@ def _install_fresh(lock: Path, target: Path, digest: str, install: Installer) ->
     staging.rename(target)
 
 
+def _lock_digest(lock: Path) -> str:
+    """SHA-256 of the lock file, as stored in the install's marker.
+
+    Raises:
+        BootstrapError: the lock cannot be read.
+    """
+    try:
+        return hashlib.sha256(lock.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise BootstrapError(f"The dependency lock file could not be read:\n\n{exc}") from exc
+
+
+def _installed_digest(target: Path) -> str | None:
+    marker = target / MARKER_NAME
+    return marker.read_text(encoding="utf-8").strip() if marker.is_file() else None
+
+
+def _install_failed(exc: subprocess.CalledProcessError | OSError, retry: str) -> BootstrapError:
+    detail = _tail(exc.output) if isinstance(exc, subprocess.CalledProcessError) else ""
+    return BootstrapError(
+        f"Installing the required components failed:\n\n{exc}\n{detail}\n"
+        f"Check your network connection and {retry}."
+    )
+
+
+def is_current(lock: Path, target: Path) -> bool:
+    """Whether ``target`` holds an install of exactly this ``lock``.
+
+    Raises:
+        BootstrapError: the lock cannot be read.
+    """
+    return _installed_digest(target) == _lock_digest(lock)
+
+
+def install_lock(lock: Path, target: Path, install: Installer = pip_install) -> bool:
+    """Make ``target`` hold ``lock``'s packages, installing only if it does not yet.
+
+    The same staged, hash-checked install as the first start, without its
+    window: for callers with their own UI that run it off their GUI thread.
+    Returns whether an install was needed.
+
+    Raises:
+        BootstrapError: the lock cannot be read or the install failed; an
+            earlier install in ``target`` is then left as it was.
+    """
+    digest = _lock_digest(lock)
+    if _installed_digest(target) == digest:
+        return False
+    try:
+        _install_fresh(lock, target, digest, install)
+    except (subprocess.CalledProcessError, OSError) as exc:
+        raise _install_failed(exc, "try again") from exc
+    return True
+
+
 @dataclass(frozen=True)
 class Hooks:
     """The side effects ensure_dependencies performs; tests replace them."""
@@ -205,25 +260,15 @@ def ensure_dependencies(
         return
 
     target = target or deps_dir()
-    try:
-        digest = hashlib.sha256(lock.read_bytes()).hexdigest()
-    except OSError as exc:
-        raise BootstrapError(f"The dependency lock file could not be read:\n\n{exc}") from exc
-
-    marker = target / MARKER_NAME
-    current = marker.read_text(encoding="utf-8").strip() if marker.is_file() else None
-    if current != digest:
+    digest = _lock_digest(lock)
+    if _installed_digest(target) != digest:
         try:
             hooks.progress(
                 "Installing send_to_window's components (first start only)...",
                 lambda: _install_fresh(lock, target, digest, hooks.install),
             )
         except (subprocess.CalledProcessError, OSError) as exc:
-            detail = _tail(exc.output) if isinstance(exc, subprocess.CalledProcessError) else ""
-            raise BootstrapError(
-                f"Installing the required components failed:\n\n{exc}\n{detail}\n"
-                "Check your network connection and start the app again."
-            ) from exc
+            raise _install_failed(exc, "start the app again") from exc
 
     hooks.add_site_dir(str(target))
     importlib.invalidate_caches()
