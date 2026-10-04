@@ -1,0 +1,26 @@
+{
+  "openproject": {
+    "project": "macros",
+    "project_id": 13,
+    "project_name": "Launcher",
+    "child_projects": [
+      { "project": "macros-1", "project_id": 16, "project_name": "Macros" },
+      { "project": "recipie-calculator", "project_id": 15, "project_name": "Recipe Calculator" }
+    ],
+    "claude_user_id": 5,
+    "blocked_assignee": "chris",
+    "statuses": {
+      "in_progress": 7,
+      "decision_required": 17,
+      "human_action_required": 18,
+      "human_action_completed": 16,
+      "closed": 12
+    },
+    "types": {
+      "phase": 3,
+      "task": 1,
+      "bug": 7
+    }
+  },
+  "rules": ["Do not close Phase work packages (OpenProject #242)"]
+}
