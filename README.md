@@ -143,7 +143,7 @@ Everything else is in the source:
   `plugins/recipe_calc/launcher-app.toml`:
 
   ```toml
-  script = "Recpe_Calc.py"
+  script = "Recipe_Calc.py"
   ```
 
   `script` must be a relative path to a `.py` or `.pyw` file inside that

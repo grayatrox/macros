@@ -1,2 +1,2 @@
 # Lists this folder's app in launcher.pyw. See docs/adr/0001-launcher-app-manifests.md.
-script = "Recpe_Calc.py"
+script = "Recipe_Calc.py"

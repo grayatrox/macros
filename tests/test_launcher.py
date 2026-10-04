@@ -90,7 +90,7 @@ def test_this_repo_lists_only_its_declared_apps(launcher: ModuleType) -> None:
     # The acceptance case: every app lives in plugins/<app>/.
     assert _find(launcher, ROOT / "plugins") == [
         "macros/Macros.py",
-        "recipe_calc/Recpe_Calc.py",
+        "recipe_calc/Recipe_Calc.py",
     ]
 
 
@@ -312,7 +312,7 @@ def test_with_no_saved_folder_the_repos_plugins_dir_is_scanned(
     try:
         (entry,) = app.findChildren(QtWidgets.QLineEdit)
         assert entry.text() == str(ROOT / "plugins")
-        assert _listed(_Window(app, entry, errors, [])) == ["Macros.py", "Recpe_Calc.py"]
+        assert _listed(_Window(app, entry, errors, [])) == ["Macros.py", "Recipe_Calc.py"]
         assert errors == []
         assert not app.deps_installing
         assert pip.calls == []
