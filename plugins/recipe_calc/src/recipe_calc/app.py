@@ -21,6 +21,7 @@ import os
 import re
 import sys
 import threading
+import time
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
@@ -81,6 +82,7 @@ GUI_TITLE = "#404040"  # station name drawn on its GUI texture, as in-game
 COUNT_SHADOW = "#3b3b3b"
 FONT_FAMILY = "Segoe UI"
 
+ICON_SLICE_MS = 15  # longest the GUI thread spends rendering list icons before handling events
 ICON_PX = 16  # vanilla texture size
 VIEW_SIZE = (470, 166)  # the placement panel
 RESULT_BOX = (406, 59)  # top-left of the result icon beside a textureless panel
@@ -638,6 +640,13 @@ class RecipeCalculator(QtWidgets.QWidget):
         self.jar: JarCandidate | None = None
         self.assets = JarAssets(None)
         self.loading = False  # a background recipe load is in flight
+        # Item-list icons are rendered in short slices between events, so a big
+        # list is usable at once instead of freezing the window until it is done.
+        self.next_icon_row = 0
+        self.icon_timer = QtCore.QTimer(self)
+        self.icon_timer.setSingleShot(True)
+        self.icon_timer.setInterval(0)
+        self.icon_timer.timeout.connect(self.fill_icons)
 
         self.jars_detected.connect(self.on_jars_detected)
         self.recipes_loaded.connect(self.on_recipes_loaded)
@@ -871,12 +880,24 @@ class RecipeCalculator(QtWidgets.QWidget):
         for item in items:
             row = QtWidgets.QListWidgetItem(" " + pretty_name(item))
             row.setData(ITEM_ROLE, item)
-            if (icon := self.assets.icon(item)) is not None:
-                row.setIcon(QtGui.QIcon(icon))
             if self.book.kind(item) == "brew":
                 row.setForeground(QtGui.QColor(BREW_COLOR))
             self.items_list.addItem(row)
         self.items_box.setTitle(f"Items  ({len(items)})")
+        self.next_icon_row = 0
+        self.icon_timer.start()
+
+    def fill_icons(self) -> None:
+        """Give the next rows their icons, stopping after ICON_SLICE_MS to let the GUI breathe."""
+        deadline = time.monotonic() + ICON_SLICE_MS / 1000
+        while self.next_icon_row < self.items_list.count():
+            row = self.items_list.item(self.next_icon_row)
+            self.next_icon_row += 1
+            if (icon := self.assets.icon(str(row.data(ITEM_ROLE)))) is not None:
+                row.setIcon(QtGui.QIcon(icon))
+            if time.monotonic() >= deadline:
+                self.icon_timer.start()
+                return
 
     def selected_item(self) -> str | None:
         rows = self.items_list.selectedItems()

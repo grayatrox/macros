@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 from PIL import Image
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from recipe_calc import app as calc_app
 from recipe_calc import block_render
@@ -440,3 +440,45 @@ def test_a_missing_jar_has_no_textures(qapp: QtWidgets.QApplication, tmp_path: P
     assert assets.icon("stick") is None
     assert assets.gui_texture("crafting_table") is None
     assert JarAssets(None).load_image("anything.png") is None
+
+
+def test_the_item_list_is_usable_before_its_icons_are_rendered(
+    open_window: Callable[[list[JarCandidate]], RecipeCalculator],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = loaded(open_window([JarCandidate(make_jar(tmp_path / "a.jar"), "1.21", "test")]))
+    rendered: list[str] = []
+    pixmap = QtGui.QPixmap(32, 32)
+
+    def slow_icon(item: str, *, big: bool = False) -> QtGui.QPixmap:
+        rendered.append(item)
+        return pixmap
+
+    monkeypatch.setattr(window.assets, "icon", slow_icon)  # inject the renderer
+    window.icon_timer.stop()
+
+    window.update_list()
+
+    # Populated and selectable with no icon rendered yet
+    assert window.items_list.count() == len(window.book.all_items)
+    assert rendered == []
+    select(window, "stick")
+    assert window.selected_item() == "stick"
+
+    everything = set(window.book.all_items)
+    wait_for(lambda: everything <= set(rendered))
+    assert all(
+        not window.items_list.item(i).icon().isNull() for i in range(window.items_list.count())
+    )
+
+
+def test_a_new_search_restarts_icon_filling_for_the_new_rows(
+    open_window: Callable[[list[JarCandidate]], RecipeCalculator], tmp_path: Path
+) -> None:
+    window = loaded(open_window([JarCandidate(make_jar(tmp_path / "a.jar"), "1.21", "test")]))
+
+    window.search_entry.setText("oak pl")
+
+    wait_for(lambda: not window.items_list.item(0).icon().isNull())
+    assert window.items_list.count() == 1
