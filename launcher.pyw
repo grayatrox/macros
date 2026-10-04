@@ -19,11 +19,11 @@ import subprocess
 import sys
 import tkinter as tk
 import tkinter.font as tkfont
+import tomllib
 import traceback
-from collections.abc import Iterator
-from pathlib import Path
+from pathlib import Path, PurePath
 from tkinter import filedialog, messagebox, ttk
-from typing import Any
+from typing import Any, NamedTuple
 
 # Settings file location
 SETTINGS_FILE = Path.home() / ".python_launcher_settings.json"
@@ -39,8 +39,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 # Directories that never contain anything worth launching
 SKIP_DIRS = {"__pycache__", ".venv", "venv", "env", ".git", ".idea", "site-packages"}
 
-# What counts as a launchable script
-SCRIPT_GLOBS = ("*.py", "*.pyw")
+# An app is a script declared by this file in its folder; nothing else is listed.
+# See docs/adr/0001-launcher-app-manifests.md.
+MANIFEST_NAME = "launcher-app.toml"
+SCRIPT_SUFFIXES = {".py", ".pyw"}
 
 # This file, so the launcher never lists itself as something to launch
 SELF_PATH = Path(__file__).resolve()
@@ -81,6 +83,80 @@ def resolve_console_python() -> str:
 # CREATE_NO_WINDOW rather than switching to pythonw, so the child still has a
 # real (if invisible) stdout and a stray print() cannot blow up.
 PYTHON_EXE = resolve_console_python()
+
+
+class ManifestError(Exception):
+    """A launcher-app.toml that does not declare a usable script."""
+
+
+class AppScan(NamedTuple):
+    """What find_apps found: the declared scripts, and one message per bad manifest."""
+
+    scripts: list[Path]
+    problems: list[str]
+
+
+def read_manifest(manifest: Path) -> Path:
+    """Return the script a launcher-app.toml declares, as a path under its folder.
+
+    The script must be a relative path that stays inside the manifest's folder,
+    so a manifest can only list its own app, never something elsewhere on disk.
+
+    Raises:
+        ManifestError: the manifest is unreadable, invalid TOML, or its
+            ``script`` is missing, not a .py/.pyw, outside its folder, or absent.
+    """
+    try:
+        data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+    except OSError as e:
+        raise ManifestError(f"could not be read: {e}") from e
+    except tomllib.TOMLDecodeError as e:
+        raise ManifestError(f"is not valid TOML: {e}") from e
+
+    script = data.get("script")
+    if not isinstance(script, str) or not script.strip():
+        raise ManifestError("has no 'script' naming the file to run.")
+    # anchor, not is_absolute(): on Windows "/x.py" has a root but no drive and
+    # is not "absolute", yet it still points outside the folder.
+    if PurePath(script).anchor:
+        raise ManifestError(f"script {script!r} must be a relative path.")
+    if PurePath(script).suffix.lower() not in SCRIPT_SUFFIXES:
+        raise ManifestError(f"script {script!r} must be a .py or .pyw file.")
+
+    # Resolved so neither '..' nor a symlink can lead out of the folder.
+    home = manifest.parent.resolve()
+    target = (home / script).resolve()
+    if not target.is_relative_to(home):
+        raise ManifestError(f"script {script!r} must be inside {home}.")
+    if not target.is_file():
+        raise ManifestError(f"script {script!r} does not exist.")
+    return manifest.parent / target.relative_to(home)
+
+
+def find_apps(folder: Path) -> AppScan:
+    """Find every app declared by a launcher-app.toml anywhere under folder.
+
+    Searches all subfolders except SKIP_DIRS, and never lists the launcher
+    itself. A bad manifest is reported in ``problems`` rather than raised, so
+    one broken app does not hide the others.
+    """
+    scripts: list[Path] = []
+    problems: list[str] = []
+    seen: set[Path] = set()
+    for manifest in sorted(folder.rglob(MANIFEST_NAME)):
+        if SKIP_DIRS.intersection(manifest.parts) or not manifest.is_file():
+            continue
+        try:
+            script = read_manifest(manifest)
+        except ManifestError as e:
+            problems.append(f"{manifest} {e}")
+            continue
+        resolved = script.resolve()
+        if resolved == SELF_PATH or resolved in seen:
+            continue
+        seen.add(resolved)
+        scripts.append(script)
+    return AppScan(scripts, problems)
 
 
 def make_window_icon(master: tk.Misc | None = None) -> tk.PhotoImage:
@@ -487,24 +563,12 @@ class PythonLauncherGUI:
         if self.selected_folder.get() != self.committed_folder:
             self.scan_folder()
 
-    def find_scripts(self, folder: Path) -> Iterator[Path]:
-        """Yield launchable scripts under folder, skipping noise and this file."""
-        seen: set[Path] = set()
-        for pattern in SCRIPT_GLOBS:
-            for script in folder.rglob(pattern):
-                if SKIP_DIRS.intersection(script.parts):
-                    continue
-                resolved = script.resolve()
-                if resolved == SELF_PATH or resolved in seen:
-                    continue
-                seen.add(resolved)
-                yield script
-
     def scan_folder(self) -> None:
-        """Scan the folder in the folder box for Python files.
+        """Scan the folder in the folder box for apps (see find_apps).
 
         A blank or missing folder is reported and the box reverts to the last
-        folder that scanned, leaving the file list as it was.
+        folder that scanned, leaving the file list as it was. Bad manifests are
+        shown in a warning; the apps that are fine are still listed.
         """
         # Explorer's "Copy as path" wraps the path in double quotes
         text = self.selected_folder.get().strip().strip('"').strip()
@@ -524,19 +588,24 @@ class PythonLauncherGUI:
             self.tree.delete(item)
         self.items_by_path.clear()
 
+        scan = find_apps(folder)
+
         # Organise files by directory
         file_dict: dict[str, list[tuple[str, str]]] = {}
         count = 0
-        for script in sorted(self.find_scripts(folder)):
+        for script in sorted(scan.scripts):
             rel_path = script.relative_to(folder)
             parent_dir = str(rel_path.parent) if rel_path.parent != Path() else "Root"
             file_dict.setdefault(parent_dir, []).append((script.name, str(script)))
             count += 1
 
+        if scan.problems:
+            messagebox.showwarning("Some apps could not be listed", "\n\n".join(scan.problems))
+
         if not count:
             self.selected_file = None
             self.update_buttons()
-            self.set_status("No Python files found in this folder.")
+            self.set_status(f"No apps found: none of these folders has a {MANIFEST_NAME}.")
             return
 
         for dir_name in sorted(file_dict):
@@ -550,7 +619,7 @@ class PythonLauncherGUI:
                 self.items_by_path[file_path] = item
 
         self.refresh_status_cells()
-        self.set_status(f"Found {count} Python file(s). Select one to launch.")
+        self.set_status(f"Found {count} app(s). Select one to launch.")
 
         # Re-select whatever was last launched, if it is still around
         last_file = self.settings.get("last_file", "")

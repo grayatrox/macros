@@ -25,8 +25,9 @@ Small Windows tools for gaming, mostly Minecraft:
   vote. `python -m macros.mcvote` runs the older fully automatic Selenium
   flow for captcha-free findmcserver.com pages.
 
-- **`launcher.pyw`**: a small GUI that lists the Python scripts in a folder
-  and starts or stops them. It needs no third-party packages.
+- **`launcher.pyw`**: a small GUI that lists the apps in a folder and its
+  subfolders, and starts or stops them. It needs no third-party packages. An
+  app is a script declared by a `launcher-app.toml` (see Configure).
 
 `Recipe Calc/` is a separate project with its own tracker and is not covered
 here.
@@ -129,4 +130,14 @@ Everything else is in the source:
 - **Userscript sites.** Add a site to the userscript's `SELECTORS` and `@match`
   lines when you add a vote URL on a new host.
 - **Launcher.** `launcher.pyw` remembers its folder and options in
-  `~/.python_launcher_settings.json`.
+  `~/.python_launcher_settings.json`. It lists only scripts declared by a
+  `launcher-app.toml` in their folder, found anywhere under the chosen folder:
+
+  ```toml
+  script = "Recpe_Calc.py"
+  ```
+
+  `script` must be a relative path to a `.py` or `.pyw` file inside that
+  folder. Other `.py` files, such as package modules, tools and tests, are not
+  listed. A bad manifest is named in a warning, and the other apps are still
+  listed. The reasoning is in `docs/adr/0001-launcher-app-manifests.md`.
