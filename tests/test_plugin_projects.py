@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from packaging.requirements import Requirement
 
+from pluginhost import plugin_deps
 from tools import lock
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -111,6 +113,48 @@ def test_plugin_requirements_are_hash_pinned(plugin: Path) -> None:
     dev_lock = _locked_names(ROOT / "requirements-dev.lock")
     assert {_name(r) for r in runtime} <= runtime_lock
     assert {_name(r) for r in extras} <= dev_lock
+
+
+def _out_of_range(requirements: list[str], lock_file: Path) -> list[str]:
+    """Requirements whose range excludes the version ``lock_file`` pins.
+
+    A requirement the lock does not pin at all is left to the hash-pin test;
+    one whose environment marker does not match this machine is skipped.
+    """
+    pins = plugin_deps.read_pins(lock_file)
+    stale = []
+    for text in requirements:
+        if not plugin_deps.applies(text):
+            continue
+        requirement = Requirement(text)
+        pinned = pins.get(plugin_deps.normalise(requirement.name))
+        if pinned is not None and not requirement.specifier.contains(pinned, prereleases=True):
+            stale.append(f"{text} (lock pins {pinned})")
+    return stale
+
+
+def _pyprojects() -> list[Path]:
+    return [ROOT / "pyproject.toml", *(p / "pyproject.toml" for p in _plugin_dirs())]
+
+
+@pytest.mark.parametrize("pyproject", _pyprojects(), ids=lambda p: p.parent.name or "root")
+def test_the_locks_satisfy_every_version_range(pyproject: Path) -> None:
+    # The launcher compares installed versions to the lock, not the range, so a
+    # range edited without `python tools/lock.py` would go unnoticed otherwise.
+    runtime, extras = _requirements(_project(pyproject))
+
+    assert _out_of_range(runtime, ROOT / "requirements.lock") == []
+    assert _out_of_range(extras, ROOT / "requirements-dev.lock") == []
+
+
+def test_a_range_edited_without_relocking_is_reported(tmp_path: Path) -> None:
+    lock_file = tmp_path / "requirements.lock"
+    lock_file.write_text("pillow==11.3.0", encoding="utf-8")
+
+    assert _out_of_range(["pillow>=11,<12"], lock_file) == []
+    assert _out_of_range(["Pillow>=12,<13"], lock_file) == ["Pillow>=12,<13 (lock pins 11.3.0)"]
+    assert _out_of_range(["pillow>=12,<13; sys_platform == 'nonexistent'"], lock_file) == []
+    assert _out_of_range(["other>=12"], lock_file) == []
 
 
 def test_the_lock_parser_reads_pins() -> None:
