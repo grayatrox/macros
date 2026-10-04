@@ -2,7 +2,7 @@
 
 Reads recipes and item tags out of a Minecraft client jar, picks one recipe per
 item, works out how much of every ingredient a quantity needs, and lays out how
-a recipe sits in its workstation's GUI. Recipe_Calc.py draws the results.
+a recipe sits in its workstation's GUI. recipe_calc.app draws the results.
 
 A jar is anything with ``namelist()`` and ``read(name)`` (see ``Archive``), so a
 ``zipfile.ZipFile`` works and tests pass an in-memory stand-in.

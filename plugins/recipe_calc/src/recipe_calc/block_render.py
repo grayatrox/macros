@@ -2,7 +2,7 @@
 
 Blocks with no flat item texture (fences, slabs, stairs, walls...) get an
 isometric render of their block model, the way the game draws inventory icons.
-Needs Pillow; without it ``BlockRenderer.render`` returns None and Recipe_Calc
+Needs Pillow; without it ``BlockRenderer.render`` returns None and recipe_calc.app
 falls back to flat textures. Nothing here touches the GUI.
 """
 
@@ -12,7 +12,7 @@ import io
 import json
 from typing import Any, NamedTuple
 
-from recipe_book import Archive
+from recipe_calc.recipe_book import Archive
 
 try:
     from PIL import Image

@@ -1,14 +1,14 @@
-#!/usr/bin/env python3
 """Minecraft Recipe Calculator: a dark PySide6 (Qt) window.
 
 Pick a Minecraft client jar (found automatically under %APPDATA%, or with
 Browse) and an item, and see every ingredient a quantity of it needs and how
 its recipe sits in the workstation's in-game GUI. The calculation lives in
-recipe_book.py and block icons are rendered by block_render.py; this file is
+recipe_book and block icons are rendered by block_render; this module is
 the window and the jar's textures as Qt images.
 
-PySide6 and Pillow come from the launcher's dependency install (see this
-folder's pyproject.toml). Without Pillow, blocks get flat icons.
+PySide6 and Pillow come from the launcher's dependency install, or from the
+first-start install in recipe_calc.__main__ when the app is run directly (see
+this plugin's pyproject.toml). Without Pillow, blocks get flat icons.
 """
 
 from __future__ import annotations
@@ -28,8 +28,8 @@ from typing import Any, override
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from block_render import BlockRenderer, item_model_ref, model_texture_ref
-from recipe_book import (
+from recipe_calc.block_render import BlockRenderer, item_model_ref, model_texture_ref
+from recipe_calc.recipe_book import (
     BreakdownNode,
     JarCandidate,
     Placement,
@@ -943,13 +943,10 @@ class RecipeCalculator(QtWidgets.QWidget):
 
 
 def main() -> int:
+    """Open the window and run until it closes. Returns the exit code."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     app = QtWidgets.QApplication(sys.argv)
     apply_dark_theme(app)
     window = RecipeCalculator()
     window.show()
     return app.exec()
-
-
-if __name__ == "__main__":
-    sys.exit(main())
