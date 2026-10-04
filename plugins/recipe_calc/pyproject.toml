@@ -1,7 +1,7 @@
 # What Recipe Calc needs at runtime. A dependency declaration for the launcher,
-# not an installable package. Every requirement here must appear verbatim in the
-# root pyproject.toml, which the hashed locks are compiled from
-# (tests/test_plugin_projects.py). See docs/adr/0003-per-plugin-pyproject.md.
+# not an installable package. This is the only place these requirements are
+# declared; tools/lock.py compiles them into the hashed locks. See
+# docs/adr/0003-per-plugin-pyproject.md and docs/adr/0005-root-declares-only-the-launcher.md.
 [project]
 name = "recipe-calc"
 version = "0.1.0"

@@ -1,32 +1,20 @@
 [project]
-name = "macros"
+name = "launcher"
 version = "0.1.0"
-description = "Per-application global hotkey macros in a system-tray app, plus helper scripts."
+description = "Python File Launcher: lists the apps in plugins/ and launches them."
 requires-python = ">=3.12"
 
-# Runtime dependencies of launcher.pyw plus, verbatim, every plugin's own
-# (plugins/*/pyproject.toml; tests/test_plugin_projects.py keeps them in step,
-# see docs/adr/0003-per-plugin-pyproject.md). Pinned with hashes in
-# requirements.lock (regenerate with `python tools/lock.py`); these ranges only
-# bound the resolver.
+# Runtime dependencies of launcher.pyw only. Each app in plugins/ declares its
+# own in plugins/<app>/pyproject.toml. tools/lock.py compiles this file and those
+# together into the hash-pinned requirements.lock, so one resolve pins them all
+# (docs/adr/0005-root-declares-only-the-launcher.md). These ranges only bound
+# the resolver; regenerate the locks with `python tools/lock.py`.
 dependencies = [
-    "pystray>=0.19,<0.20",
-    "keyboard>=0.13,<0.14",
-    "pyautogui>=0.9.54,<0.10",
-    "pywin32>=311",
-    "psutil>=7,<8",
-    "pillow>=11,<12",
-    # launcher.pyw's GUI and Macros' log window. Essentials holds QtWidgets
-    # without the large Addons.
+    # launcher.pyw's GUI. Essentials holds QtWidgets without the large Addons.
     "PySide6-Essentials>=6.11,<6.12",
 ]
 
 [project.optional-dependencies]
-# Only mcvote.vote() - the legacy full-auto Selenium flow - needs this. The
-# hotkey app's vote_server() opens the user's real browser and does not.
-legacy-vote = [
-    "selenium>=4.32,<5",
-]
 dev = [
     "pytest>=8.3,<9",
     "ruff>=0.16,<0.17",

@@ -1,6 +1,7 @@
 # 4. The launcher installs each app's dependencies from the hashed lock
 
-Date: 2026-10-04. Status: accepted. Work package: #666. Builds on
+Date: 2026-10-04. Status: accepted; where the lock is compiled from is updated by
+[ADR 0005](0005-root-declares-only-the-launcher.md). Work package: #666. Builds on
 [ADR 0003](0003-per-plugin-pyproject.md).
 
 ## Context

@@ -652,8 +652,8 @@ class PythonLauncherGUI(QtWidgets.QWidget):
             if status.unpinned:
                 problems.append(
                     f"{app_dir.name} needs {', '.join(status.unpinned)}, not pinned in "
-                    f"{self.deps.lock.name}, so not installed. Add it to the root "
-                    "pyproject.toml and run python tools/lock.py."
+                    f"{self.deps.lock.name}, so not installed. Put the app in plugins/ "
+                    "and run python tools/lock.py, which pins every app's pyproject.toml."
                 )
             if status.missing:
                 needing.append(path)

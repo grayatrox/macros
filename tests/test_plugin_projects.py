@@ -1,8 +1,9 @@
 """Every plugin declares its own dependencies, and every one is hash-pinned.
 
-See docs/adr/0003-per-plugin-pyproject.md. A plugin's ``pyproject.toml`` says
-what that app needs; the root ``pyproject.toml`` is what the locks are compiled
-from, so a plugin requirement missing from the root would never be pinned.
+See docs/adr/0003-per-plugin-pyproject.md and docs/adr/0005-root-declares-only-the-launcher.md.
+A plugin's ``pyproject.toml`` says what that app needs; the root
+``pyproject.toml`` says what the launcher needs and nothing more. The locks are
+compiled from all of them together (``tools/lock.py``).
 """
 
 from __future__ import annotations
@@ -13,6 +14,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+from tools import lock
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGINS = ROOT / "plugins"
@@ -45,7 +48,7 @@ def _locked_names(lock: Path) -> set[str]:
     return {_name(pin) for pin in pins}
 
 
-ROOT_RUNTIME, ROOT_EXTRAS = _requirements(_project(ROOT / "pyproject.toml"))
+ROOT_RUNTIME, _ = _requirements(_project(ROOT / "pyproject.toml"))
 
 
 def test_this_repo_has_both_plugins() -> None:
@@ -62,14 +65,42 @@ def test_each_plugin_has_a_pyproject_declaring_its_dependencies(plugin: Path) ->
     assert isinstance(project["dependencies"], list)
 
 
-@pytest.mark.parametrize("plugin", _plugin_dirs(), ids=lambda p: p.name)
-def test_plugin_requirements_match_the_root(plugin: Path) -> None:
-    runtime, extras = _requirements(_project(plugin / "pyproject.toml"))
+def test_the_root_declares_only_the_launcher() -> None:
+    # launcher.pyw's own runtime need is its Qt GUI; every app's needs are in its plugin.
+    assert {_name(r) for r in ROOT_RUNTIME} == {"pyside6-essentials"}
+    assert set(_project(ROOT / "pyproject.toml").get("optional-dependencies", {})) == {"dev"}
 
-    for requirement in runtime:
-        assert requirement in ROOT_RUNTIME, f"{requirement} is not a root runtime dependency"
-    for requirement in extras:
-        assert requirement in ROOT_RUNTIME + ROOT_EXTRAS, f"{requirement} is not in the root"
+
+@pytest.mark.parametrize("plugin", _plugin_dirs(), ids=lambda p: p.name)
+def test_the_locks_are_compiled_from_each_plugins_pyproject(plugin: Path) -> None:
+    # uv records each requirement's source as "name (path)"; a lock compiled
+    # without the plugin's file would not name it.
+    source = f"({(plugin / 'pyproject.toml').relative_to(ROOT).as_posix()})"
+    for name in ("requirements.lock", "requirements-dev.lock"):
+        assert source in (ROOT / name).read_text(encoding="utf-8"), f"{name} lacks {source}"
+
+
+def test_lock_compiles_every_plugin_that_has_a_manifest(tmp_path: Path) -> None:
+    for name, files in {
+        "app": ("launcher-app.toml", "pyproject.toml"),
+        "no_manifest": ("pyproject.toml",),
+        "no_pyproject": ("launcher-app.toml",),
+    }.items():
+        (tmp_path / name).mkdir()
+        for file in files:
+            (tmp_path / name / file).write_text("", encoding="utf-8")
+
+    # A manifest without a pyproject.toml is a plugin that fails the test above;
+    # lock.py must not hide that by skipping it silently.
+    with pytest.raises(FileNotFoundError, match="no_pyproject"):
+        lock.plugin_projects(tmp_path)
+
+    (tmp_path / "no_pyproject" / "launcher-app.toml").unlink()
+    assert lock.plugin_projects(tmp_path) == [tmp_path / "app" / "pyproject.toml"]
+
+
+def test_lock_finds_this_repos_plugins() -> None:
+    assert lock.plugin_projects() == [p / "pyproject.toml" for p in _plugin_dirs()]
 
 
 @pytest.mark.parametrize("plugin", _plugin_dirs(), ids=lambda p: p.name)

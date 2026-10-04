@@ -103,11 +103,12 @@ of the apps from `launcher.pyw`: double-click it, or run
 The other verbs are `fmt`, `lint` (ruff check plus format check) and
 `typecheck` (strict mypy). CI (`.github/workflows/ci.yml`) runs `setup`, `lint`,
 `typecheck` and `test` on Windows. Each app declares its own runtime
-dependencies in `plugins/<app>/pyproject.toml`; the root `pyproject.toml` repeats
-them verbatim alongside the launcher's, and the locks are compiled from the root
-(`docs/adr/0003-per-plugin-pyproject.md`; a test fails if the two disagree).
-After changing dependencies, update both and regenerate the locks with
-`python tools/lock.py`.
+dependencies in `plugins/<app>/pyproject.toml`, and only there. The root
+`pyproject.toml` declares the launcher's own (PySide6) plus the `dev` extra and
+the tool config. `python tools/lock.py` compiles the root and every plugin's
+`pyproject.toml` together into the hashed locks
+(`docs/adr/0005-root-declares-only-the-launcher.md`); run it after changing any
+of them.
 
 ## Configure
 
@@ -161,5 +162,5 @@ Everything else is in the source:
   background, the same install as the first start. The app shows
   *installing...* and launches once the install is done. Apps started from
   the launcher get that folder on `PYTHONPATH`. A dependency the lock does not
-  pin is reported, not installed: add it to the root `pyproject.toml` and run
-  `python tools/lock.py`. See `docs/adr/0004-plugin-dependency-install.md`.
+  pin is reported, not installed: run `python tools/lock.py`, which pins the
+  dependencies of every app in `plugins/`. See `docs/adr/0004-plugin-dependency-install.md`.
