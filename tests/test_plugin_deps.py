@@ -17,6 +17,7 @@ from pluginhost.plugin_deps import (
     DepsStatus,
     PluginDeps,
     PluginDepsError,
+    applies,
     check,
     read_pins,
     read_requirements,
@@ -182,6 +183,82 @@ def test_a_requirement_the_lock_does_not_pin_is_unpinned_not_missing() -> None:
 
 def test_no_requirements_means_nothing_to_do() -> None:
     assert check([], PINS, lambda _name: None) == DepsStatus([], [])
+
+
+# ── environment markers (OP #673) ────────────────────────────────────────────
+
+WIN = {
+    "sys_platform": "win32",
+    "platform_system": "Windows",
+    "os_name": "nt",
+    "python_version": "3.12",
+    "python_full_version": "3.12.4",
+    "extra": "",
+}
+
+
+def test_a_requirement_whose_marker_excludes_this_machine_is_skipped() -> None:
+    # Uses the real running interpreter: no platform is called "no-such-os".
+    requirements = ['fakepkg; sys_platform == "no-such-os"']
+    assert check(requirements, PINS, lambda _name: None) == DepsStatus([], [])
+
+
+def test_a_marker_that_matches_this_machine_still_counts() -> None:
+    status = check(['fakepkg; sys_platform != "no-such-os"'], PINS, lambda _name: None)
+    assert status == DepsStatus(missing=["fakepkg==1.0"], unpinned=[])
+
+
+def test_a_skipped_requirement_is_not_reported_unpinned_either() -> None:
+    status = check(['unlocked; sys_platform == "linux"'], PINS, lambda _name: None, WIN)
+    assert status == DepsStatus([], [])
+
+
+@pytest.mark.parametrize(
+    ("requirement", "expected"),
+    [
+        ("pkg", True),
+        ("pkg>=1", True),
+        ('pkg; sys_platform == "win32"', True),
+        ('pkg; sys_platform == "linux"', False),
+        ("pkg ; sys_platform=='win32'", True),
+        ('pkg; "linux" == sys_platform', False),
+        ('pkg; sys_platform != "win32"', False),
+        ('pkg; sys_platform == "win32" and python_version >= "3.9"', True),
+        ('pkg; sys_platform == "linux" or os_name == "nt"', True),
+        ('pkg; sys_platform == "linux" or os_name == "posix"', False),
+        ('pkg; sys_platform == "win32" and (os_name == "posix" or python_version < "3.10")', False),
+        ('pkg; python_version >= "3.9"', True),
+        ('pkg; python_version < "3.9"', False),
+        ('pkg; python_version >= "3.9" and python_version < "3.13"', True),
+        ('pkg; python_version < "3.100"', True),
+        ('pkg; python_full_version >= "3.12.4"', True),
+        ('pkg; python_full_version > "3.12.4"', False),
+        ('pkg; python_version == "3.12.*"', True),
+        ('pkg; python_version ~= "3.10"', True),
+        ('pkg; platform_system in "Windows Linux"', True),
+        ('pkg; platform_system not in "Linux Darwin"', True),
+        ('pkg[extra1]>=1; sys_platform == "linux"', False),
+        ('pkg @ https://example.com/p.whl ; sys_platform == "linux"', False),
+    ],
+)
+def test_markers_are_evaluated_against_the_environment(requirement: str, expected: bool) -> None:
+    assert applies(requirement, WIN) is expected
+
+
+@pytest.mark.parametrize(
+    "requirement",
+    [
+        "pkg; sys_platform ==",
+        'pkg; sys_platform == "win32',
+        'pkg; no_such_variable == "x"',
+        'pkg; sys_platform == "win32" and',
+        'pkg; (sys_platform == "win32"',
+        'pkg; sys_platform "win32"',
+    ],
+)
+def test_a_malformed_marker_is_reported(requirement: str) -> None:
+    with pytest.raises(PluginDepsError, match="marker"):
+        applies(requirement, WIN)
 
 
 def test_version_on_reads_metadata_and_the_first_folder_wins(tmp_path: Path) -> None:

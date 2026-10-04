@@ -8,6 +8,9 @@ environment costs nothing. If something is missing, :meth:`PluginDeps.ensure_ins
 runs off the GUI thread. The full reasoning is in
 ``docs/adr/0004-plugin-dependency-install.md``. In short:
 
+* **Environment markers** (``; sys_platform == "win32"``) are evaluated against
+  the running interpreter by :func:`applies`; a requirement whose marker does
+  not match this machine is skipped entirely (OP #673).
 * **Satisfied** means the exact version pinned in ``requirements.lock`` is
   visible on the path the launched app will get. Version ranges are not
   evaluated; the lock is what gets installed, so the lock is what is checked.
@@ -26,14 +29,16 @@ from __future__ import annotations
 
 import importlib
 import importlib.metadata
+import operator
 import os
+import platform
 import re
 import sys
 import tomllib
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from pluginhost.bootstrap import (
     LOCK_FILE,
@@ -72,8 +77,8 @@ def normalise(name: str) -> str:
 def requirement_name(requirement: str) -> str:
     """Normalised distribution name of a PEP 508 requirement string.
 
-    Extras, version ranges and environment markers are ignored: only the name
-    is needed to find the requirement's pin in the lock.
+    Extras, version ranges and environment markers are ignored here: only the
+    name is needed to find the requirement's pin in the lock.
 
     Raises:
         PluginDepsError: the string does not start with a distribution name.
@@ -82,6 +87,194 @@ def requirement_name(requirement: str) -> str:
     if not match:
         raise PluginDepsError(f"{requirement!r} is not a requirement.")
     return normalise(match.group(1))
+
+
+#: PEP 508 environment: marker variable name to its value on this machine.
+Environment = Mapping[str, str]
+
+_TOKEN = re.compile(
+    r"""\s*(?:
+        (?P<string>"[^"]*"|'[^']*')
+      | (?P<op>===|==|!=|~=|<=|>=|<|>)
+      | (?P<paren>[()])
+      | (?P<word>[A-Za-z_][A-Za-z0-9_.]*)
+    )""",
+    re.VERBOSE,
+)
+_OPERATORS: dict[str, Callable[[Any, Any], bool]] = {
+    "==": operator.eq,
+    "===": operator.eq,
+    "!=": operator.ne,
+    "<": operator.lt,
+    "<=": operator.le,
+    ">": operator.gt,
+    ">=": operator.ge,
+}
+#: ``~=`` needs at least ``X.Y``: it pins everything but the last segment.
+_COMPATIBLE_MIN_SEGMENTS = 2
+_VERSION = re.compile(r"\d+(?:\.\d+)*")
+_VARIABLES = frozenset(
+    {
+        "os_name",
+        "sys_platform",
+        "platform_machine",
+        "platform_python_implementation",
+        "platform_release",
+        "platform_system",
+        "platform_version",
+        "python_version",
+        "python_full_version",
+        "implementation_name",
+        "implementation_version",
+        "extra",
+    }
+)
+
+
+def current_environment() -> dict[str, str]:
+    """The PEP 508 marker variables for the running interpreter (stdlib only)."""
+    info = sys.implementation.version
+    implementation_version = f"{info.major}.{info.minor}.{info.micro}"
+    if info.releaselevel != "final":
+        implementation_version += f"{info.releaselevel[0]}{info.serial}"
+    return {
+        "os_name": os.name,
+        "sys_platform": sys.platform,
+        "platform_machine": platform.machine(),
+        "platform_python_implementation": platform.python_implementation(),
+        "platform_release": platform.release(),
+        "platform_system": platform.system(),
+        "platform_version": platform.version(),
+        "python_version": ".".join(platform.python_version_tuple()[:2]),
+        "python_full_version": platform.python_version(),
+        "implementation_name": sys.implementation.name,
+        "implementation_version": implementation_version,
+        "extra": "",
+    }
+
+
+def _release(text: str) -> tuple[int, ...] | None:
+    """Numeric release segments of a plain version like ``3.12.4``, else None."""
+    return tuple(int(part) for part in text.split(".")) if _VERSION.fullmatch(text) else None
+
+
+def _padded(a: tuple[int, ...], b: tuple[int, ...]) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    size = max(len(a), len(b))
+    return a + (0,) * (size - len(a)), b + (0,) * (size - len(b))
+
+
+def _compare(left: str, op: str, right: str) -> bool:
+    """One marker comparison: by version when both sides are versions, else as text."""
+    if op == "in":
+        return left in right
+    if op == "not in":
+        return left not in right
+    prefix = right.endswith(".*") and op in ("==", "!=")
+    a = _release(left)
+    b = _release(right[:-2] if prefix else right)
+    if a is None or b is None:
+        # PEP 508 falls back to string comparison when a side is not a version.
+        return _OPERATORS[op](left, right)
+    if prefix:
+        return (a[: len(b)] == b) == (op == "==")
+    if op == "~=":
+        if len(b) < _COMPATIBLE_MIN_SEGMENTS:
+            raise PluginDepsError(f"Marker operator ~= needs a release like 3.10, not {right!r}.")
+        low, high = _padded(a, b)
+        return low >= high and a[: len(b) - 1] == b[:-1]
+    return _OPERATORS[op](*_padded(a, b))
+
+
+class _Marker:
+    """Recursive-descent evaluator for a PEP 508 marker expression."""
+
+    def __init__(self, text: str, environment: Environment) -> None:
+        self.text = text
+        self.environment = environment
+        self.tokens: list[tuple[str, str]] = []
+        position = 0
+        while text[position:].strip():
+            match = _TOKEN.match(text, position)
+            if not match or not match.lastgroup:
+                raise PluginDepsError(f"Cannot read the marker {text!r} near {text[position:]!r}.")
+            self.tokens.append((match.lastgroup, match.group(match.lastgroup)))
+            position = match.end()
+        self.index = 0
+
+    def evaluate(self) -> bool:
+        result = self._or()
+        if self.index != len(self.tokens):
+            raise PluginDepsError(
+                f"Unexpected {self.tokens[self.index][1]!r} in marker {self.text!r}."
+            )
+        return result
+
+    def _peek(self) -> tuple[str, str]:
+        return self.tokens[self.index] if self.index < len(self.tokens) else ("", "")
+
+    def _next(self) -> tuple[str, str]:
+        token = self._peek()
+        if not token[0]:
+            raise PluginDepsError(f"The marker {self.text!r} ends unexpectedly.")
+        self.index += 1
+        return token
+
+    def _or(self) -> bool:
+        result = self._and()
+        while self._peek() == ("word", "or"):
+            self.index += 1
+            result = self._and() or result  # parse the right side even when decided
+        return result
+
+    def _and(self) -> bool:
+        result = self._atom()
+        while self._peek() == ("word", "and"):
+            self.index += 1
+            result = self._atom() and result
+        return result
+
+    def _atom(self) -> bool:
+        if self._peek() == ("paren", "("):
+            self.index += 1
+            result = self._or()
+            if self._next() != ("paren", ")"):
+                raise PluginDepsError(f"Expected ')' in marker {self.text!r}.")
+            return result
+        left = self._operand()
+        kind, value = self._next()
+        if kind == "op":
+            op = value
+        elif (kind, value) == ("word", "in"):
+            op = "in"
+        elif (kind, value) == ("word", "not") and self._next() == ("word", "in"):
+            op = "not in"
+        else:
+            raise PluginDepsError(f"Expected a comparison, got {value!r}, in marker {self.text!r}.")
+        return _compare(left, op, self._operand())
+
+    def _operand(self) -> str:
+        kind, value = self._next()
+        if kind == "string":
+            return value[1:-1]
+        if kind == "word" and value in _VARIABLES:
+            return self.environment.get(value, "")
+        raise PluginDepsError(f"{value!r} is not a marker variable or string in {self.text!r}.")
+
+
+def applies(requirement: str, environment: Environment | None = None) -> bool:
+    """Whether a PEP 508 requirement's environment marker matches ``environment``.
+
+    A requirement with no marker always applies. ``environment`` defaults to
+    :func:`current_environment`.
+
+    Raises:
+        PluginDepsError: the marker is malformed.
+    """
+    _, separator, marker = requirement.partition(";")
+    if not separator or not marker.strip():
+        return True
+    environment = environment if environment is not None else current_environment()
+    return _Marker(marker, environment).evaluate()
 
 
 def read_pins(lock: Path) -> dict[str, str]:
@@ -126,16 +319,25 @@ def read_requirements(app_dir: Path) -> list[str]:
 
 
 def check(
-    requirements: Iterable[str], pins: Mapping[str, str], version_of: VersionOf
+    requirements: Iterable[str],
+    pins: Mapping[str, str],
+    version_of: VersionOf,
+    environment: Environment | None = None,
 ) -> DepsStatus:
     """Sort ``requirements`` into those satisfied, missing, and not pinned at all.
 
+    A requirement whose environment marker does not match ``environment``
+    (default: this interpreter) is skipped: it is in none of the lists.
+
     Raises:
-        PluginDepsError: a requirement has no distribution name.
+        PluginDepsError: a requirement has no distribution name or a bad marker.
     """
+    environment = environment if environment is not None else current_environment()
     missing: list[str] = []
     unpinned: list[str] = []
     for requirement in requirements:
+        if not applies(requirement, environment):
+            continue
         name = requirement_name(requirement)
         pin = pins.get(name)
         if pin is None:

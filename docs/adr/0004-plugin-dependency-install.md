@@ -37,7 +37,8 @@ Constraints:
 - **Satisfied = the locked version is present.** A requirement is satisfied
   when the exact version `requirements.lock` pins for it is visible on the path
   the app will get. The lock is what gets installed, so the lock is what is
-  checked; version ranges and environment markers are not evaluated. The dev
+  checked; version ranges are not evaluated. Environment markers are: a requirement whose
+  marker excludes this machine is skipped (OP #673). The dev
   lock is constrained to the same runtime pins, so a dev virtualenv counts as
   satisfied.
 - **What gets installed: the whole runtime lock, into the first-start folder.**
