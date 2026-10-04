@@ -10,3 +10,8 @@ geckodriver.exe
 
 # Local virtualenv (python -m venv .venv)
 .venv/
+
+# Local secrets and environment config; commit a .env.example template instead
+.env
+.env.*
+!.env.example
