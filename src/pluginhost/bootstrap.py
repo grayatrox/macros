@@ -171,13 +171,43 @@ def _tail(output: str | None, lines: int = 8) -> str:
 
 
 def _install_fresh(lock: Path, target: Path, digest: str, install: Installer) -> None:
-    """Install into a staging folder, then swap it in place of ``target``."""
+    """Install into a staging folder, then swap it in place of ``target``.
+
+    The old install is renamed aside rather than deleted in place: a rename
+    either succeeds whole or changes nothing, whereas deleting a folder that a
+    running app holds files in (Windows locks them) stops part-way and leaves
+    a broken install. It is deleted only once the new one is in place.
+
+    Raises:
+        BootstrapError: ``target`` is in use and could not be replaced; it is
+            left as it was.
+        subprocess.CalledProcessError, OSError: the install itself failed;
+            ``target`` is left as it was.
+    """
     staging = target.with_name(target.name + ".new")
+    retired = target.with_name(target.name + ".old")
+    if retired.exists() and not target.exists():
+        # A swap was interrupted between its two renames: this is the last good install.
+        retired.rename(target)
     shutil.rmtree(staging, ignore_errors=True)
     install(lock, staging)
     (staging / MARKER_NAME).write_text(digest, encoding="utf-8")
-    shutil.rmtree(target, ignore_errors=True)
-    staging.rename(target)
+    shutil.rmtree(retired, ignore_errors=True)  # left by an earlier swap; harmless if it stays
+    if target.exists():
+        try:
+            target.rename(retired)
+        except OSError as exc:
+            raise BootstrapError(
+                f"The components folder is in use, so it could not be updated:\n\n{target}\n\n"
+                f"{exc}\n\nClose every app that uses it, then try again."
+            ) from exc
+    try:
+        staging.rename(target)
+    except OSError:
+        if retired.exists():
+            retired.rename(target)
+        raise
+    shutil.rmtree(retired, ignore_errors=True)  # a locked leftover is retried next install
 
 
 def _lock_digest(lock: Path) -> str:

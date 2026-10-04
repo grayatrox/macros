@@ -15,6 +15,7 @@ from collections.abc import Callable
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 from tkinter import ttk
+from typing import TextIO
 
 import pytest
 
@@ -148,6 +149,66 @@ def test_failed_install_keeps_the_previous_one(lock: Path, target: Path) -> None
         world.run(lock, target)
     assert (target / MARKER_NAME).read_text(encoding="utf-8") == old_marker
     assert world.site_dirs == []
+
+
+# ── the swap must never leave the install half-deleted (#675) ────────────────
+# An open handle is a real Windows lock: the file can be neither deleted nor
+# its folder renamed while it is held, as when a running app has it loaded.
+
+
+def test_locked_install_is_left_whole_and_reported_as_in_use(lock: Path, target: Path) -> None:
+    World().run(lock, target)
+    old = sorted(p.name for p in target.iterdir())
+    lock.write_text("pystray==0.19.6 --hash=sha256:bbbb\n", encoding="utf-8")
+    world = World()
+    with (
+        (target / "keyboard.py").open(encoding="utf-8"),
+        pytest.raises(BootstrapError, match="in use") as caught,
+    ):
+        world.run(lock, target)
+    assert "network" not in str(caught.value)
+    assert sorted(p.name for p in target.iterdir()) == old
+    assert world.site_dirs == []
+
+
+def test_failed_move_into_place_restores_the_previous_install(lock: Path, target: Path) -> None:
+    World().run(lock, target)
+    old_marker = (target / MARKER_NAME).read_text(encoding="utf-8")
+    lock.write_text("pystray==0.19.6 --hash=sha256:bbbb\n", encoding="utf-8")
+    held: list[TextIO] = []
+
+    def install_and_hold(lock_: Path, staging: Path) -> None:
+        World().install(lock_, staging)
+        # e.g. a virus scanner still reading the new folder when it is moved in
+        held.append((staging / "keyboard.py").open(encoding="utf-8"))
+
+    try:
+        with pytest.raises(BootstrapError):
+            bootstrap.install_lock(lock, target, install_and_hold)
+    finally:
+        for handle in held:
+            handle.close()
+    assert (target / MARKER_NAME).read_text(encoding="utf-8") == old_marker
+    assert (target / "keyboard.py").is_file()
+
+
+def test_install_left_aside_by_an_interrupted_swap_is_recovered(lock: Path, target: Path) -> None:
+    World().run(lock, target)
+    old_marker = (target / MARKER_NAME).read_text(encoding="utf-8")
+    target.rename(target.with_name(target.name + ".old"))  # stopped mid-swap
+    lock.write_text("pystray==0.19.6 --hash=sha256:bbbb\n", encoding="utf-8")
+    world = World()
+    world.install_fails = True
+    with pytest.raises(BootstrapError, match="network"):
+        world.run(lock, target)
+    assert (target / MARKER_NAME).read_text(encoding="utf-8") == old_marker
+
+
+def test_successful_swap_leaves_no_folders_behind(lock: Path, target: Path) -> None:
+    World().run(lock, target)
+    lock.write_text("pystray==0.19.6 --hash=sha256:bbbb\n", encoding="utf-8")
+    World().run(lock, target)
+    assert sorted(p.name for p in target.parent.iterdir()) == ["deps-py312", "requirements.lock"]
 
 
 def test_missing_lock_is_reported(tmp_path: Path, target: Path) -> None:
