@@ -164,6 +164,8 @@ class PythonLauncherGUI:
         self.launch_mode = tk.StringVar(value=self.settings["launch_mode"])
         self.single_instance = tk.BooleanVar(value=self.settings["single_instance"])
         self.selected_file: str | None = None
+        # What the folder box goes back to when a typed path is rejected
+        self.committed_folder = self.selected_folder.get()
 
         # path -> list of Popen handles this launcher started that are still
         # alive. Reaped by poll_processes(). With single-instance off a script
@@ -269,7 +271,7 @@ class PythonLauncherGUI:
             )
         style.configure("Launch.TButton", font=bold, padding=(14, 10))
 
-        # Read-only path entry
+        # Editable path entry
         style.configure(
             "Path.TEntry",
             fieldbackground=SURFACE,
@@ -278,13 +280,15 @@ class PythonLauncherGUI:
             lightcolor=BORDER,
             darkcolor=BORDER,
             insertcolor=TEXT,
+            selectbackground=ACCENT,
+            selectforeground="#ffffff",
             padding=6,
         )
         style.map(
             "Path.TEntry",
-            fieldbackground=[("readonly", SURFACE)],
-            foreground=[("readonly", TEXT)],
             bordercolor=[("focus", ACCENT)],
+            # clam maps its own steel blue onto a focused selection
+            selectbackground=[("focus", ACCENT)],
         )
 
         # Check / radio indicators
@@ -367,10 +371,12 @@ class PythonLauncherGUI:
 
         folder_row = ttk.Frame(folder_frame)
         folder_row.pack(fill="x", pady=(4, 0))
-        path_entry = ttk.Entry(
-            folder_row, textvariable=self.selected_folder, style="Path.TEntry", state="readonly"
+        self.path_entry = ttk.Entry(
+            folder_row, textvariable=self.selected_folder, style="Path.TEntry"
         )
-        path_entry.pack(side="left", fill="x", expand=True)
+        self.path_entry.pack(side="left", fill="x", expand=True)
+        self.path_entry.bind("<Return>", self.commit_folder)
+        self.path_entry.bind("<FocusOut>", self.on_folder_focus_out)
         ttk.Button(folder_row, text="Browse", command=self.pick_folder).pack(
             side="left", padx=(8, 0)
         )
@@ -471,6 +477,16 @@ class PythonLauncherGUI:
             self.selected_folder.set(folder)
             self.scan_folder()
 
+    def commit_folder(self, _event: object = None) -> None:
+        """Scan whatever has been typed into the folder box (Enter)."""
+        self.scan_folder()
+
+    def on_folder_focus_out(self, _event: object = None) -> None:
+        # Only an edit is worth a rescan here. This also stops the error dialog
+        # from a rejected path re-triggering itself when it takes the focus.
+        if self.selected_folder.get() != self.committed_folder:
+            self.scan_folder()
+
     def find_scripts(self, folder: Path) -> Iterator[Path]:
         """Yield launchable scripts under folder, skipping noise and this file."""
         seen: set[Path] = set()
@@ -485,12 +501,24 @@ class PythonLauncherGUI:
                 yield script
 
     def scan_folder(self) -> None:
-        """Scan the selected folder for Python files."""
-        folder = Path(self.selected_folder.get())
+        """Scan the folder in the folder box for Python files.
 
-        if not folder.is_dir():
-            messagebox.showerror("Error", "Selected folder does not exist.")
+        A blank or missing folder is reported and the box reverts to the last
+        folder that scanned, leaving the file list as it was.
+        """
+        # Explorer's "Copy as path" wraps the path in double quotes
+        text = self.selected_folder.get().strip().strip('"').strip()
+        # Checked before Path(): Path("") is "." and would scan the working directory
+        if not text:
+            self.reject_folder("Enter a folder to scan.")
             return
+        folder = Path(text)
+        if not folder.is_dir():
+            self.reject_folder(f"Folder not found:\n{text}")
+            return
+
+        self.selected_folder.set(text)
+        self.committed_folder = text
 
         for item in self.tree.get_children():
             self.tree.delete(item)
@@ -530,6 +558,12 @@ class PythonLauncherGUI:
             item = self.items_by_path[last_file]
             self.tree.selection_set(item)
             self.tree.see(item)
+
+    def reject_folder(self, message: str) -> None:
+        # Revert before the dialog: it takes the focus, and the box's FocusOut
+        # must then see nothing left to commit.
+        self.selected_folder.set(self.committed_folder)
+        messagebox.showerror("Error", message)
 
     # --- Selection ---------------------------------------------------------
 
