@@ -25,3 +25,6 @@ settings.json
 
 # Project-scope MCP config, generated per machine by ~/.claude hooks
 /.mcp.json
+
+# Last-resort crash log written beside launcher.pyw by report_error when Qt is unusable
+/launcher-error.log
