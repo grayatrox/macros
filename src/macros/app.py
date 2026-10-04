@@ -14,7 +14,6 @@ Dependencies are pinned and hash-checked in requirements.lock, and installed
 automatically on first start (macros.bootstrap).
 """
 
-import base64
 import ctypes
 import inspect
 import io
@@ -23,12 +22,11 @@ import subprocess
 import sys
 import threading
 import time
-import tkinter as tk
 from collections.abc import Callable, Mapping, Sequence
 from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, Self, TypedDict
+from typing import Any, Protocol, Self, TypedDict, override
 
 # Third-party: installed on first start by macros.bootstrap, which runs before
 # this module is imported (see macros.__main__).
@@ -40,6 +38,7 @@ import win32clipboard
 import win32gui
 import win32process
 from PIL import Image, ImageDraw
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from macros.settings import SETTINGS_PATH, Settings, SettingsError, load_settings
 
@@ -98,173 +97,224 @@ def make_app_image(size: int = 64) -> Image.Image:
     return img
 
 
-def make_window_icon(master: tk.Misc | None = None) -> tk.PhotoImage:
-    """The same mark as a PhotoImage for iconphoto().
-
-    Pass the window it belongs to: a PhotoImage is owned by one interpreter, and
-    letting it bind to whichever root happens to be default fails outright if a
-    second Tk is ever created.
-    """
+def make_window_icon() -> QtGui.QIcon:
+    """The same mark as a QIcon for the log window. Needs a QApplication."""
     buffer = io.BytesIO()
     make_app_image(64).save(buffer, format="PNG")
-    return tk.PhotoImage(master=master, data=base64.b64encode(buffer.getvalue()))
+    pixmap = QtGui.QPixmap()
+    # No format argument: Qt detects PNG from the header, and PySide6's stubs
+    # (bytes) and runtime (str) disagree on that argument's type.
+    pixmap.loadFromData(buffer.getvalue())
+    return QtGui.QIcon(pixmap)
 
 
-class LogWindow:
-    """Toggleable dark-theme log console (runs on the main tkinter thread)."""
+def local_clock() -> str:
+    """Local wall-clock time, for humans reading the log."""
+    return time.strftime("%H:%M:%S")
 
-    def __init__(self) -> None:
-        self.root = tk.Tk()
-        self.root.title("send_to_window — log")
-        self.root.geometry("780x480")
-        self.root.configure(bg=BG)
-        self.icon = make_window_icon(self.root)  # keep a reference so tk doesn't garbage-collect it
-        self.root.iconphoto(True, self.icon)
-        self.root.protocol("WM_DELETE_WINDOW", self.hide)
+
+def _font(size: int, bold: bool = False) -> QtGui.QFont:
+    font = QtGui.QFont("Consolas", size)
+    font.setBold(bold)
+    return font
+
+
+def _text_format(color: str, size: int, bold: bool = False) -> QtGui.QTextCharFormat:
+    fmt = QtGui.QTextCharFormat()
+    fmt.setForeground(QtGui.QColor(color))
+    fmt.setFont(_font(size, bold))
+    return fmt
+
+
+def _log_stylesheet() -> str:
+    return "\n".join(
+        [
+            f"QWidget {{ background: {BG}; color: {FG}; }}",
+            f"QFrame#header, QFrame#footer {{ background: {BG_HEADER}; }}",
+            f"QLabel#title {{ background: {BG_HEADER}; color: {ACCENT}; }}",
+            f"QPlainTextEdit {{ background: {BG}; color: {FG}; border: none;"
+            f" selection-background-color: {ACCENT}; padding: 8px 10px; }}",
+            f"QPushButton {{ background: {BG_HEADER}; color: {FG_DIM}; border: none;"
+            " padding: 2px 10px; }",
+            f"QPushButton:hover {{ background: {BG}; color: {FG}; }}",
+            f"QScrollBar:vertical {{ background: {BG_HEADER}; width: 12px; margin: 0; }}",
+            f"QScrollBar::handle:vertical {{ background: {FG_DIM}; min-height: 24px; }}",
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }",
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }",
+        ]
+    )
+
+
+class _LogPanel(QtWidgets.QWidget):
+    """The log window itself."""
+
+    @override
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        # The app lives on in the tray: closing only hides the log, as Quit is
+        # the tray's job. Ignoring the close also keeps Qt from treating it as
+        # the last window closing.
+        event.ignore()
+        self.hide()
+
+
+class LogWindow(QtCore.QObject):
+    """Toggleable dark-theme log console.
+
+    The public methods may be called from any thread: the hotkey listener and
+    the tray icon each run on their own. Each one only emits a signal; the
+    connected slot runs on the thread that created this object (the GUI
+    thread), because Qt queues a signal emitted from another thread. Qt
+    widgets must never be touched from any other thread.
+
+    Create it on the GUI thread, after the QApplication.
+    """
+
+    _line_logged = QtCore.Signal(str, str, str)  # timestamp, level, message
+    _show_requested = QtCore.Signal()
+    _hide_requested = QtCore.Signal()
+    _toggle_requested = QtCore.Signal()
+    _status_changed = QtCore.Signal(str, str)  # text, colour
+    _quit_requested = QtCore.Signal(int)  # delay in ms
+
+    def __init__(
+        self,
+        clock: Callable[[], str] = local_clock,
+        quit_app: Callable[[], None] = QtWidgets.QApplication.quit,
+    ) -> None:
+        """clock stamps each line; quit_app ends the event loop (both injectable for tests)."""
+        super().__init__()
+        self._clock = clock
+        self._quit_app = quit_app
+        self._level_formats = {
+            level: _text_format(color, 10, bold=True) for level, color in LEVELS.items()
+        }
+        self._unknown_level_format = _text_format(FG, 10, bold=True)
+        self._ts_format = _text_format(FG_DIM, 9)
+        self._msg_format = _text_format(FG, 10)
+
+        self.window = _LogPanel()
+        self.window.setWindowTitle("send_to_window — log")
+        self.window.resize(780, 480)
+        self.window.setWindowIcon(make_window_icon())
+        self.window.setStyleSheet(_log_stylesheet())
         self._build_ui()
-        self._visible = True
-        self._pending: list[tuple[str, str]] = []
-        self._lock = threading.Lock()
+
+        self._line_logged.connect(self._append)
+        self._show_requested.connect(self._show)
+        self._hide_requested.connect(self._hide)
+        self._toggle_requested.connect(self._toggle)
+        self._status_changed.connect(self._set_status)
+        self._quit_requested.connect(self._quit)
 
     # ── UI construction ──────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
-        header = tk.Frame(self.root, bg=BG_HEADER, pady=6)
-        header.pack(fill="x")
+        layout = QtWidgets.QVBoxLayout(self.window)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        tk.Label(
-            header,
-            text="⬡  send_to_window",
-            bg=BG_HEADER,
-            fg=ACCENT,
-            font=("Consolas", 12, "bold"),
-            padx=12,
-        ).pack(side="left")
+        header = QtWidgets.QFrame()
+        header.setObjectName("header")
+        header_row = QtWidgets.QHBoxLayout(header)
+        header_row.setContentsMargins(12, 6, 12, 6)
+        title = QtWidgets.QLabel("⬡  send_to_window")
+        title.setObjectName("title")
+        title.setFont(_font(12, bold=True))
+        header_row.addWidget(title)
+        header_row.addStretch()
+        self._status_label = QtWidgets.QLabel()
+        self._status_label.setObjectName("status")
+        self._status_label.setFont(_font(10))
+        header_row.addWidget(self._status_label)
+        layout.addWidget(header)
+        self._set_status("● listening", LEVELS["SUCCESS"])
 
-        self._status_label = tk.Label(
-            header,
-            text="● listening",
-            bg=BG_HEADER,
-            fg=LEVELS["SUCCESS"],
-            font=("Consolas", 10),
-            padx=12,
-        )
-        self._status_label.pack(side="right")
+        self._text = QtWidgets.QPlainTextEdit()
+        self._text.setObjectName("log")
+        self._text.setReadOnly(True)
+        self._text.setFont(_font(10))
+        layout.addWidget(self._text, stretch=1)
 
-        # Scrollable text area
-        frame = tk.Frame(self.root, bg=BG)
-        frame.pack(fill="both", expand=True)
-
-        self._text = tk.Text(
-            frame,
-            bg=BG,
-            fg=FG,
-            font=("Consolas", 10),
-            relief="flat",
-            bd=0,
-            wrap="word",
-            state="disabled",
-            selectbackground=ACCENT,
-            insertbackground=FG,
-            padx=10,
-            pady=8,
-        )
-        scroll = tk.Scrollbar(frame, command=self._text.yview, bg=BG, troughcolor=BG_HEADER)
-        self._text.configure(yscrollcommand=scroll.set)
-        scroll.pack(side="right", fill="y")
-        self._text.pack(side="left", fill="both", expand=True)
-
-        # Configure a tag per log level
-        for level, color in LEVELS.items():
-            self._text.tag_configure(
-                f"lvl_{level}", foreground=color, font=("Consolas", 10, "bold")
-            )
-        self._text.tag_configure("ts", foreground=FG_DIM, font=("Consolas", 9))
-        self._text.tag_configure("msg", foreground=FG, font=("Consolas", 10))
-
-        # Footer / clear button
-        footer = tk.Frame(self.root, bg=BG_HEADER, pady=4)
-        footer.pack(fill="x")
-        tk.Button(
-            footer,
-            text="Clear",
-            bg=BG_HEADER,
-            fg=FG_DIM,
-            activebackground=BG,
-            activeforeground=FG,
-            relief="flat",
-            bd=0,
-            padx=10,
-            pady=2,
-            command=self._clear,
-            font=("Consolas", 9),
-            cursor="hand2",
-        ).pack(side="right", padx=8)
+        footer = QtWidgets.QFrame()
+        footer.setObjectName("footer")
+        footer_row = QtWidgets.QHBoxLayout(footer)
+        footer_row.setContentsMargins(8, 4, 8, 4)
+        footer_row.addStretch()
+        clear = QtWidgets.QPushButton("Clear")
+        clear.setObjectName("clear")
+        clear.setFont(_font(9))
+        clear.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        clear.clicked.connect(self._text.clear)
+        footer_row.addWidget(clear)
+        layout.addWidget(footer)
 
     # ── Public API (thread-safe) ─────────────────────────────────────────────
 
     def log(self, message: str, level: str = "INFO") -> None:
-        with self._lock:
-            self._pending.append((message, level.upper()))
+        self._line_logged.emit(self._clock(), level.upper(), message)
 
     def show(self) -> None:
-        self.root.after(0, self._show)
+        self._show_requested.emit()
 
     def hide(self) -> None:
-        self.root.after(0, self._hide)
+        self._hide_requested.emit()
 
     def toggle(self) -> None:
-        if self._visible:
-            self.hide()
-        else:
-            self.show()
+        self._toggle_requested.emit()
 
     def set_status(self, text: str, level: str = "SUCCESS") -> None:
-        color = LEVELS.get(level.upper(), FG)
+        self._status_changed.emit(text, LEVELS.get(level.upper(), FG))
 
-        def _update() -> None:
-            self._status_label.configure(text=text, fg=color)
+    def quit(self, delay_ms: int = 300) -> None:
+        """End the event loop after delay_ms, so a last log line can still be seen."""
+        self._quit_requested.emit(delay_ms)
 
-        self.root.after(0, _update)
-
-    # ── Internal (must run on main thread) ───────────────────────────────────
+    # ── Slots (run on the GUI thread) ────────────────────────────────────────
 
     def _show(self) -> None:
-        self.root.deiconify()
-        self.root.lift()
-        self._visible = True
+        self.window.showNormal()
+        self.window.raise_()
+        self.window.activateWindow()
 
     def _hide(self) -> None:
-        self.root.withdraw()
-        self._visible = False
+        self.window.hide()
 
-    def _clear(self) -> None:
-        self._text.configure(state="normal")
-        self._text.delete("1.0", "end")
-        self._text.configure(state="disabled")
+    def _toggle(self) -> None:
+        # Decided here rather than in toggle(): only the GUI thread can read
+        # the window's state safely.
+        if self.window.isVisible():
+            self._hide()
+        else:
+            self._show()
 
-    def _flush_pending(self) -> None:
-        with self._lock:
-            items, self._pending = self._pending, []
-        if items:
-            self._text.configure(state="normal")
-            for message, level in items:
-                ts = time.strftime("%H:%M:%S")  # local wall-clock time, for humans
-                self._text.insert("end", f"[{ts}] ", "ts")
-                self._text.insert("end", f"{level:<7} ", f"lvl_{level}")
-                self._text.insert("end", f"{message}\n", "msg")
-            self._text.see("end")
-            self._text.configure(state="disabled")
+    def _set_status(self, text: str, color: str) -> None:
+        self._status_label.setText(text)
+        self._status_label.setStyleSheet(f"background: {BG_HEADER}; color: {color};")
+
+    def _append(self, timestamp: str, level: str, message: str) -> None:
+        cursor = QtGui.QTextCursor(self._text.document())
+        cursor.movePosition(QtGui.QTextCursor.MoveOperation.End)
+        cursor.insertText(f"[{timestamp}] ", self._ts_format)
+        cursor.insertText(
+            f"{level:<7} ", self._level_formats.get(level, self._unknown_level_format)
+        )
+        cursor.insertText(f"{message}\n", self._msg_format)
+        # Scroll, rather than move the widget's cursor, so a selection survives.
+        scrollbar = self._text.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+
+    def _quit(self, delay_ms: int) -> None:
+        QtCore.QTimer.singleShot(delay_ms, self._quit_app)
 
     def run(self) -> None:
-        """Blocking — call from the main thread."""
-
-        def poll() -> None:
-            self._flush_pending()
-            self.root.after(100, poll)
-
-        self.root.after(100, poll)
-        self.root.mainloop()
+        """Show the window and run the Qt event loop. Blocking: call from the main thread."""
+        app = QtWidgets.QApplication.instance()
+        if not isinstance(app, QtWidgets.QApplication):
+            raise RuntimeError("LogWindow.run() needs a QApplication")
+        # The window hiding must never end the app; only quit() does.
+        app.setQuitOnLastWindowClosed(False)
+        self._show()
+        app.exec()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -902,7 +952,7 @@ class App:
         keyboard.unhook_all()
         if self._tray:
             self._tray.stop()
-        self.log_win.root.after(300, self.log_win.root.quit)
+        self.log_win.quit(delay_ms=300)
 
     # ── Entry point ──────────────────────────────────────────────────────────
 
@@ -916,7 +966,7 @@ class App:
         tray_thread = threading.Thread(target=self._tray.run, daemon=True)
         tray_thread.start()
 
-        # tkinter must own the main thread on Windows
+        # Qt's event loop must own the main thread
         self.log_win.run()
 
 
@@ -951,5 +1001,7 @@ def main(settings_path: Path = SETTINGS_PATH) -> int:
             0x40,  # MB_ICONINFORMATION
         )
         return 0
+    # Must exist before any widget, and stay referenced until they are all gone.
+    _qt_app = QtWidgets.QApplication(sys.argv)
     App(settings).run()
     return 0

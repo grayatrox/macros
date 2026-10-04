@@ -15,6 +15,8 @@ dependencies = [
     "pywin32>=311",
     "psutil>=7,<8",
     "pillow>=11,<12",
+    # The log window. Essentials holds QtWidgets without the large Addons.
+    "PySide6-Essentials>=6.11,<6.12",
 ]
 
 [project.optional-dependencies]

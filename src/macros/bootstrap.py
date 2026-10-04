@@ -51,7 +51,7 @@ REQUIRED_MODULES = (
     "win32gui",
     "win32process",
     "PIL",
-    "PySide6",  # launcher.pyw's GUI
+    "PySide6",  # the log window and launcher.pyw's GUI
 )
 
 ROOT = Path(__file__).resolve().parents[2]
