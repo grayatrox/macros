@@ -15,12 +15,14 @@
       "decision_required": 17,
       "human_action_required": 18,
       "human_action_completed": 16,
-      "closed": 12
+      "closed": 12,
+      "log": 19
     },
     "types": {
       "phase": 3,
       "task": 1,
-      "bug": 7
+      "bug": 7,
+      "session_log": 8
     }
   },
   "rules": ["Do not close Phase work packages (OpenProject #242)"]
