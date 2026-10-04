@@ -16,7 +16,7 @@ MB_ICONERROR = 0x10
 def main() -> int:
     """Install any missing dependencies, then run the app. Returns the exit code."""
     try:
-        ensure_dependencies()
+        ensure_dependencies(app_name="send_to_window")
     except BootstrapError as exc:
         # Under pythonw there is no console, so report it in a native dialog.
         ctypes.windll.user32.MessageBoxW(0, str(exc), "send_to_window - cannot start", MB_ICONERROR)

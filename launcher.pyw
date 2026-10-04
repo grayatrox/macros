@@ -49,7 +49,7 @@ def bootstrap() -> None:
         SystemExit: the install failed; the reason has been shown in a dialog.
     """
     try:
-        ensure_dependencies()
+        ensure_dependencies(app_name="Python File Launcher")
     except BootstrapError as exc:
         show_native_error("Python File Launcher - cannot start", str(exc))
         raise SystemExit(1) from exc

@@ -61,7 +61,7 @@ MARKER_NAME = "requirements.lock.sha256"
 
 FindSpec = Callable[[str], ModuleSpec | None]
 Installer = Callable[[Path, Path], None]
-Progress = Callable[[str, Callable[[], None]], None]
+Progress = Callable[[str, str, Callable[[], None]], None]  # (title, message, work)
 AddSiteDir = Callable[[str], None]
 
 
@@ -126,8 +126,8 @@ def pip_install(lock: Path, target: Path, build_lock: Path = BUILD_LOCK_FILE) ->
     )
 
 
-def with_progress_window(message: str, work: Callable[[], None]) -> None:
-    """Run ``work`` on a thread behind a small "please wait" window.
+def with_progress_window(title: str, message: str, work: Callable[[], None]) -> None:
+    """Run ``work`` on a thread behind a small "please wait" window titled ``title``.
 
     A first install downloads several packages; with no window it would look
     like the app failed to start. Whatever ``work`` raises is re-raised here.
@@ -136,7 +136,7 @@ def with_progress_window(message: str, work: Callable[[], None]) -> None:
     from tkinter import ttk  # noqa: PLC0415 - ditto
 
     root = tk.Tk()
-    root.title("send_to_window - first start")
+    root.title(title)
     root.resizable(False, False)
     root.attributes("-topmost", True)
     tk.Label(root, text=message, font=("Segoe UI", 10), padx=24, pady=16).pack()
@@ -245,11 +245,18 @@ class Hooks:
 
 
 def ensure_dependencies(
-    *, lock: Path = LOCK_FILE, target: Path | None = None, hooks: Hooks | None = None
+    *,
+    app_name: str,
+    lock: Path = LOCK_FILE,
+    target: Path | None = None,
+    hooks: Hooks | None = None,
 ) -> None:
     """Make every runtime dependency importable, installing on first start.
 
     Does nothing when they are already importable (e.g. a developer's venv).
+    ``app_name`` is the display name of the app that is starting; the progress
+    window is titled after it. Required, because several apps share this
+    install and a default would name the wrong one.
 
     Raises:
         BootstrapError: the lock is missing, the install failed, or modules
@@ -264,7 +271,8 @@ def ensure_dependencies(
     if _installed_digest(target) != digest:
         try:
             hooks.progress(
-                "Installing send_to_window's components (first start only)...",
+                f"{app_name} - first start",
+                f"Installing {app_name}'s components (first start only)...",
                 lambda: _install_fresh(lock, target, digest, hooks.install),
             )
         except (subprocess.CalledProcessError, OSError) as exc:

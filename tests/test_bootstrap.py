@@ -6,15 +6,19 @@ fakes; the install folders are real temp directories.
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import subprocess
 import sys
+import tkinter
 from collections.abc import Callable
 from importlib.machinery import ModuleSpec
 from pathlib import Path
+from tkinter import ttk
 
 import pytest
 
+from macros import __main__ as entry
 from macros import bootstrap
 from macros.bootstrap import (
     MARKER_NAME,
@@ -34,6 +38,7 @@ class World:
         self.site_dirs: list[str] = []
         self.install_fails = False
         self.install_provides = True
+        self.windows: list[tuple[str, str]] = []  # (title, message) of each progress window
 
     def find_spec(self, name: str) -> ModuleSpec | None:
         return ModuleSpec(name, None) if name in self.importable else None
@@ -50,17 +55,21 @@ class World:
         if self.install_provides:
             self.importable.update(REQUIRED_MODULES)
 
-    def run(self, lock: Path, target: Path) -> None:
+    def run(self, lock: Path, target: Path, *, app_name: str = "send_to_window") -> None:
         hooks = Hooks(
             install=self.install,
-            progress=_no_window,
+            progress=self.progress,
             add_site_dir=self.add_site_dir,
             find_spec=self.find_spec,
         )
-        ensure_dependencies(lock=lock, target=target, hooks=hooks)
+        ensure_dependencies(app_name=app_name, lock=lock, target=target, hooks=hooks)
+
+    def progress(self, title: str, message: str, work: Callable[[], None]) -> None:
+        self.windows.append((title, message))
+        work()
 
 
-def _no_window(_message: str, work: Callable[[], None]) -> None:
+def _no_window(_title: str, _message: str, work: Callable[[], None]) -> None:
     work()
 
 
@@ -97,6 +106,19 @@ def test_first_start_installs_from_the_lock_and_adds_the_folder(lock: Path, targ
     assert (target / MARKER_NAME).read_text(encoding="utf-8") == _digest(lock)
     assert world.site_dirs == [str(target)]
     assert not target.with_name(target.name + ".new").exists()
+
+
+# Both the launcher and Macros run the first start, so the window must name the
+# caller rather than always saying send_to_window (#663).
+@pytest.mark.parametrize("app_name", ["Python File Launcher", "send_to_window"])
+def test_the_progress_window_names_the_app_that_is_starting(
+    lock: Path, target: Path, app_name: str
+) -> None:
+    world = World()
+    world.run(lock, target, app_name=app_name)
+    [(title, message)] = world.windows
+    assert title == f"{app_name} - first start"
+    assert message == f"Installing {app_name}'s components (first start only)..."
 
 
 def test_later_starts_reuse_the_install(lock: Path, target: Path) -> None:
@@ -200,7 +222,7 @@ def test_pip_failure_reaches_the_user_with_pips_reason(
         find_spec=world.find_spec,
     )
     with pytest.raises(BootstrapError, match="No matching distribution found for x"):
-        ensure_dependencies(lock=lock, target=target, hooks=hooks)
+        ensure_dependencies(app_name="send_to_window", lock=lock, target=target, hooks=hooks)
 
 
 def argv_value(argv: list[str], flag: str) -> str:
@@ -234,3 +256,69 @@ def test_install_lock_failure_keeps_the_previous_install(lock: Path, target: Pat
 def test_install_lock_reports_a_missing_lock(tmp_path: Path, target: Path) -> None:
     with pytest.raises(BootstrapError, match="lock file"):
         bootstrap.install_lock(tmp_path / "absent.lock", target, World().install)
+
+
+# ── the window itself, and who calls it (#663) ───────────────────────────────
+
+
+class FakeTk:
+    """Stands in for tkinter.Tk: records the title, runs scheduled calls at once."""
+
+    def __init__(self) -> None:
+        self.titles: list[str] = []
+
+    def title(self, text: str) -> None:
+        self.titles.append(text)
+
+    def resizable(self, *_args: object) -> None: ...
+
+    def attributes(self, *_args: object) -> None: ...
+
+    def after(self, _ms: int, callback: Callable[[], None]) -> None:
+        callback()
+
+    def destroy(self) -> None: ...
+
+    def mainloop(self) -> None: ...
+
+
+class FakeWidget:
+    def __init__(self, *_args: object, **_kwargs: object) -> None: ...
+
+    def pack(self, **_kwargs: object) -> None: ...
+
+    def start(self, *_args: object) -> None: ...
+
+
+def test_with_progress_window_titles_the_window_as_given(monkeypatch: pytest.MonkeyPatch) -> None:
+    roots: list[FakeTk] = []
+
+    def make_root() -> FakeTk:
+        roots.append(FakeTk())
+        return roots[-1]
+
+    monkeypatch.setattr(tkinter, "Tk", make_root)
+    monkeypatch.setattr(tkinter, "Label", FakeWidget)
+    monkeypatch.setattr(ttk, "Progressbar", FakeWidget)
+    ran: list[bool] = []
+    bootstrap.with_progress_window(
+        "Python File Launcher - first start", "Installing...", lambda: ran.append(True)
+    )
+    assert ran == [True]
+    [root] = roots
+    assert root.titles == ["Python File Launcher - first start"]
+
+
+def test_macros_starts_its_first_start_under_its_own_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    names: list[str] = []
+
+    def stop(*, app_name: str) -> None:
+        names.append(app_name)
+        raise BootstrapError("stop before the app runs")
+
+    monkeypatch.setattr(entry, "ensure_dependencies", stop)
+    monkeypatch.setattr(ctypes.windll.user32, "MessageBoxW", lambda *_args: 0)
+    assert entry.main() == 1
+    assert names == ["send_to_window"]

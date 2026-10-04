@@ -523,7 +523,7 @@ def test_a_script_that_exits_is_cleared_by_the_poll(
 def test_a_failed_first_start_install_is_shown_and_exits(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def fail() -> None:
+    def fail(*, app_name: str) -> None:
         raise launcher.BootstrapError("no network")
 
     monkeypatch.setattr(launcher, "ensure_dependencies", fail)
@@ -533,6 +533,15 @@ def test_a_failed_first_start_install_is_shown_and_exits(
         launcher.bootstrap()
     assert exc.value.code == 1
     assert shown == ["no network"]
+
+
+def test_the_first_start_install_is_named_after_the_launcher(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    names: list[str] = []
+    monkeypatch.setattr(launcher, "ensure_dependencies", lambda *, app_name: names.append(app_name))
+    launcher.bootstrap()
+    assert names == ["Python File Launcher"]
 
 
 # ── dependencies ─────────────────────────────────────────────────────────────
