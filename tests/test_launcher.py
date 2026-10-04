@@ -693,3 +693,51 @@ def test_a_dependency_still_missing_after_install_is_reported(
     (error,) = window.errors
     assert "needy: fakepkg==1.0" in error
     assert str(deps.target) in error
+
+
+# ── closing during an install (#672) ─────────────────────────────────────────
+
+
+def _close_and_wait(app: Any) -> None:
+    deadline = time.monotonic() + 10
+    while app.isVisible():
+        assert time.monotonic() < deadline, "the launcher never closed"
+        QtCore.QCoreApplication.processEvents(QtCore.QEventLoop.ProcessEventsFlag.AllEvents, 50)
+
+
+def test_closing_during_an_install_waits_for_pip_instead_of_orphaning_it(
+    window: _Window, tmp_path: Path, pip: _Pip
+) -> None:
+    pip.release.clear()
+    _needy(tmp_path / "start" / "needy", "fakepkg>=1")
+    window.app.commit_folder()
+    window.app.show()
+
+    assert window.app.close() is False  # pip is still running: the window stays up
+    assert window.app.isVisible()
+    assert "before closing" in window.app.status_label.text()
+
+    pip.release.set()
+    _close_and_wait(window.app)  # closes once the install has finished
+    assert not window.app.deps_installing
+    assert window.errors == []
+
+
+def test_closing_during_a_failing_install_still_closes_without_a_dialog(
+    window: _Window, tmp_path: Path, pip: _Pip
+) -> None:
+    pip.release.clear()
+    pip.fail = True
+    _needy(tmp_path / "start" / "needy", "fakepkg>=1")
+    window.app.commit_folder()
+    window.app.show()
+
+    assert window.app.close() is False
+    pip.release.set()
+    _close_and_wait(window.app)
+    assert window.errors == []  # the user is leaving; nobody is there to read it
+
+
+def test_closing_with_no_install_running_closes_at_once(window: _Window) -> None:
+    window.app.show()
+    assert window.app.close() is True

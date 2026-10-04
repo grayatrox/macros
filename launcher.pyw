@@ -395,6 +395,8 @@ class PythonLauncherGUI(QtWidgets.QWidget):
         # Whether launched apps get the private install folder on PYTHONPATH
         self.deps_active = self.deps.active_at_start()
         self.deps_installing = False
+        # Set when the window is closed mid-install: it closes once pip is done (#672).
+        self.close_after_install = False
         # path -> the app's folder (where its pyproject.toml is), for every listed app
         self.app_dirs: dict[str, Path] = {}
         # Listed apps that cannot launch until the running install finishes
@@ -691,6 +693,9 @@ class PythonLauncherGUI(QtWidgets.QWidget):
     def on_deps_installed(self, error: object) -> None:
         """Back on the GUI thread: re-check the waiting apps, or report the failure."""
         self.deps_installing = False
+        if self.close_after_install:
+            self.close()  # the user already left; nobody is there to read a result
+            return
         waiting = sorted(self.waiting_for_deps)
         self.waiting_for_deps.clear()
         self.refresh_status_cells()
@@ -909,7 +914,17 @@ class PythonLauncherGUI(QtWidgets.QWidget):
 
     @override
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        """Persist settings and leave launched scripts running."""
+        """Persist settings and leave launched scripts running.
+
+        Not while pip is installing: it would carry on orphaned and leave a
+        part-written install folder. The window stays up, says so, and closes
+        itself from on_deps_installed once the install has finished.
+        """
+        if self.deps_installing:
+            self.close_after_install = True
+            self.set_status("Finishing the dependency install before closing...")
+            event.ignore()
+            return
         self.save_settings()
         event.accept()
 
