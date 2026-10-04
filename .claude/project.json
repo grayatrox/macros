@@ -9,6 +9,7 @@
     ],
     "claude_user_id": 5,
     "blocked_assignee": "chris",
+    "session_log_id": 694,
     "statuses": {
       "in_progress": 7,
       "decision_required": 17,
