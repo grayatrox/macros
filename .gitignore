@@ -15,3 +15,6 @@ geckodriver.exe
 .env
 .env.*
 !.env.example
+
+# Personal settings (username, vote pages); commit settings.example.json instead
+settings.json

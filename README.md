@@ -33,8 +33,9 @@ here.
 
 ## Install
 
-Windows and Python 3.12 or newer. To just use the app, run it (see
-[Run](#run)). On first start it installs its own components into
+Windows and Python 3.12 or newer. To just use the app, copy
+`settings.example.json` to `settings.json`, fill in your values (see
+[Configure](#configure)), and run it (see [Run](#run)). On first start it installs its own components into
 `%LOCALAPPDATA%\Macros\deps-py312` (one folder per Python version), showing a
 small progress window. Your Python installation is not modified.
 
@@ -57,15 +58,23 @@ python -m venv .venv
 environment the app finds everything already installed and skips the
 first-start install.
 
+Then create your settings file from the template and fill in your own values
+(see [Configure](#configure)). The app will not start without it:
+
+```powershell
+Copy-Item settings.example.json settings.json
+```
+
 For the vote helper, install [Tampermonkey](https://www.tampermonkey.net/) in
 Firefox and add `strayamc_vote_autofill.user.js` to it.
 
 The legacy Selenium flow also needs
 [geckodriver](https://github.com/mozilla/geckodriver/releases): put
-`geckodriver.exe` in the repository root. It is git-ignored. Run the flow with:
+`geckodriver.exe` in the repository root. It is git-ignored. Run the flow on
+one or more findmcserver.com vote pages, with the username from `settings.json`:
 
 ```powershell
-$env:PYTHONPATH = "src"; .venv\Scripts\python -m macros.mcvote
+$env:PYTHONPATH = "src"; .venv\Scripts\python -m macros.mcvote https://findmcserver.com/server/<name>?vote=true
 ```
 
 ## Run
@@ -93,18 +102,31 @@ The other verbs are `fmt`, `lint` (ruff check plus format check) and
 
 ## Configure
 
-All configuration is in the source:
+Personal values live in `settings.json` at the repository root. It is
+git-ignored, so nothing identifying is committed; `settings.example.json` is the
+template. The app reads it once at startup and refuses to start, with a message
+saying what is wrong, if it is missing or invalid.
+
+- **`username`.** Your Minecraft username, filled in by the legacy Selenium
+  vote flow.
+- **`vote_sites`.** Maps a server address, as it appears in the client's
+  `--quickPlayMultiplayer` launch argument, to the list of `https://` vote
+  pages F20 opens for that server.
+
+The userscript cannot read `settings.json`. It asks for your username on the
+first vote page and keeps it in Tampermonkey's storage; change it from the
+Tampermonkey menu with **Set Minecraft username**.
+
+Everything else is in the source:
 
 - **Hotkeys and games.** Each game is a `Profile` subclass in `src/macros/app.py`
   with a `WINDOW_KEYWORD` (window title), `PROCESS_NAMES` (executables allowed
   to own that window) and a `hotkeys` mapping. A key written with a leading
   `*`, like `"*f23"`, fires whatever modifiers are held.
-- **Servers and vote pages.** `MinecraftProfile.STRAYA` and
-  `MinecraftProfile.VOTE_SITES` in `src/macros/app.py`. The current server is read
-  from the Minecraft client's `--quickPlayMultiplayer` launch argument, so it
-  only reflects the server the client was launched into.
-- **Your Minecraft username.** Set it in two places: `USERNAME` in `src/macros/mcvote.py`
-  and `USERNAME` in `strayamc_vote_autofill.user.js`. Add a site to the
-  userscript's `SELECTORS` and `@match` lines when you add a vote URL.
+- **Server-specific commands.** `MinecraftProfile.STRAYA` in `src/macros/app.py`.
+  The current server is read from the Minecraft client's `--quickPlayMultiplayer`
+  launch argument, so it only reflects the server the client was launched into.
+- **Userscript sites.** Add a site to the userscript's `SELECTORS` and `@match`
+  lines when you add a vote URL on a new host.
 - **Launcher.** `launcher.pyw` remembers its folder and options in
   `~/.python_launcher_settings.json`.

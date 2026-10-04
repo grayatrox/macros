@@ -21,20 +21,21 @@ Legacy:
 from __future__ import annotations
 
 import subprocess
+import sys
 import time
 import webbrowser
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from macros.settings import SETTINGS_PATH, SettingsError, load_settings
 
 if TYPE_CHECKING:
     from selenium.webdriver.firefox.webdriver import WebDriver
 
 Log = Callable[[str], None]
 
-# Configuration
-SERVER_URL = "https://findmcserver.com/server/example?vote=true"  # legacy default
-USERNAME = "YourMinecraftName"  # Replace with your actual username
+# Configuration. The username comes from settings.json (macros.settings).
 WAIT_TIMEOUT = 10  # seconds to wait for elements to load
 
 
@@ -171,7 +172,7 @@ def _make_driver(headless: bool, log: Log) -> WebDriver | None:
         return None
 
 
-def _cast_vote(driver: WebDriver, url: str, log: Log) -> bool:
+def _cast_vote(driver: WebDriver, url: str, username: str, log: Log) -> bool:
     """Vote on a single findmcserver page in the open browser."""
     from selenium.webdriver.common.by import By  # noqa: PLC0415 - optional legacy-vote extra
     from selenium.webdriver.support import expected_conditions  # noqa: PLC0415 - ditto
@@ -195,9 +196,9 @@ def _cast_vote(driver: WebDriver, url: str, log: Log) -> bool:
             )
         )
         log("Found username field!")
-        log(f"Filling username: {USERNAME}")
+        log(f"Filling username: {username}")
         username_field.clear()
-        username_field.send_keys(USERNAME)
+        username_field.send_keys(username)
         log("✓ Username filled in!")
     except Exception as e:
         log(f"⚠ Error finding username field: {e}")
@@ -219,21 +220,17 @@ def _cast_vote(driver: WebDriver, url: str, log: Log) -> bool:
 
 
 def vote(
+    username: str,
+    server_urls: str | Iterable[str],
     callback: Log | None = None,
     headless: bool = True,
-    server_urls: str | Iterable[str] | None = None,
 ) -> int:
     """Full-auto voting for findmcserver.com pages in one browser session.
 
-    server_urls defaults to [SERVER_URL] (example); the scraping assumes a
-    findmcserver.com layout. Returns the number of pages successfully voted on.
+    The scraping assumes a findmcserver.com layout. Returns the number of pages
+    successfully voted on.
     """
-    if server_urls is None:
-        urls = [SERVER_URL]
-    elif isinstance(server_urls, str):
-        urls = [server_urls]
-    else:
-        urls = list(server_urls)
+    urls = [server_urls] if isinstance(server_urls, str) else list(server_urls)
 
     log: Log = callback or print
 
@@ -250,7 +247,7 @@ def vote(
         for i, url in enumerate(urls, 1):
             log(f"── Vote {i}/{len(urls)} ──")
             try:
-                if _cast_vote(driver, url, log):
+                if _cast_vote(driver, url, username, log):
                     successes += 1
             except Exception as e:
                 # One bad page must not abort the rest of the list.
@@ -264,5 +261,24 @@ def vote(
     return successes
 
 
+def main(argv: Sequence[str] | None = None, settings_path: Path = SETTINGS_PATH) -> int:
+    """``python -m macros.mcvote URL [URL ...]``: run the legacy flow on URLs.
+
+    The username is read from settings.json. Returns the exit code: 0 after
+    the run, 1 if the settings are missing or invalid, 2 if no URL was given.
+    """
+    urls = list(sys.argv[1:] if argv is None else argv)
+    try:
+        settings = load_settings(settings_path)
+    except SettingsError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    if not urls:
+        print("usage: python -m macros.mcvote URL [URL ...]", file=sys.stderr)
+        return 2
+    vote(settings.username, urls)
+    return 0
+
+
 if __name__ == "__main__":
-    vote()
+    raise SystemExit(main())

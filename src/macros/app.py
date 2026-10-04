@@ -24,11 +24,11 @@ import sys
 import threading
 import time
 import tkinter as tk
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar, Protocol, Self, TypedDict
+from typing import Any, Protocol, Self, TypedDict
 
 # Third-party: installed on first start by macros.bootstrap, which runs before
 # this module is imported (see macros.__main__).
@@ -40,6 +40,8 @@ import win32clipboard
 import win32gui
 import win32process
 from PIL import Image, ImageDraw
+
+from macros.settings import SETTINGS_PATH, Settings, SettingsError, load_settings
 
 open_vote_pages: Callable[..., int] | None
 mcvote_import_error: ImportError | None = None
@@ -677,11 +679,6 @@ class Profile:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class VoteSite(TypedDict):
-    server: str
-    voteurls: list[str]
-
-
 class MinecraftProfile(Profile):
     WINDOW_KEYWORD = "Minecraft"
     # Java Edition runs under javaw.exe (java.exe from some launchers);
@@ -692,22 +689,15 @@ class MinecraftProfile(Profile):
     # `case self.STRAYA:` instead of a bare string literal.
     STRAYA = "strayamc.sparked.network"
 
-    # Vote pages tied to each server. vote_server() opens every URL for whichever
-    # server is running in the user's real Firefox, where the Tampermonkey
-    # userscript (strayamc_vote_autofill.user.js) pre-fills the username; you
-    # solve the captcha / log in and click the final vote button.
-    VOTE_SITES: ClassVar[tuple[VoteSite, ...]] = (
-        {
-            "server": STRAYA,
-            "voteurls": [
-                "https://minecraftservers.org/vote/000000",
-                "https://minecraft-serverlist.com/server/0000/vote",
-                "https://www.planetminecraft.com/server/example/vote/",
-                "https://www.minecraftiplist.com/server/example-00000/vote",
-                "https://craftlist.org/example#vote",
-            ],
-        },
-    )
+    def __init__(self, vote_sites: Mapping[str, Sequence[str]] | None = None) -> None:
+        """vote_sites: server address -> its vote page URLs, from settings.json.
+
+        vote_server() opens every URL for whichever server is running in the
+        user's real Firefox, where the Tampermonkey userscript
+        (strayamc_vote_autofill.user.js) pre-fills the username; you solve the
+        captcha / log in and click the final vote button.
+        """
+        self.vote_sites: Mapping[str, Sequence[str]] = vote_sites or {}
 
     @property
     def hotkeys(self) -> dict[str, Handler]:
@@ -773,10 +763,9 @@ class MinecraftProfile(Profile):
 
     def _vote_urls_for(self, server: str | None) -> list[str]:
         """The configured vote URLs for a server, or [] if none/unknown."""
-        for site in self.VOTE_SITES:
-            if site["server"] == server:
-                return site["voteurls"]
-        return []
+        if server is None:
+            return []
+        return list(self.vote_sites.get(server, ()))
 
     def vote_server(self, log: Log) -> None:
         if open_vote_pages is None:
@@ -842,14 +831,18 @@ class RustProfile(Profile):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class App:
-    PROFILES: ClassVar[list[Profile]] = [
+def make_profiles(settings: Settings) -> list[Profile]:
+    """The app's profiles, configured from the user's settings."""
+    return [
         LogWindowProfile(),
-        MinecraftProfile(),
+        MinecraftProfile(vote_sites=settings.vote_sites),
         RustProfile(),
     ]
 
-    def __init__(self) -> None:
+
+class App:
+    def __init__(self, settings: Settings) -> None:
+        self.profiles = make_profiles(settings)
         self.log_win = LogWindow()
         self._tray: Any = None  # pystray.Icon; pystray ships no type information
 
@@ -858,7 +851,7 @@ class App:
     def _collect_all_hotkeys(self) -> dict[str, list[Profile]]:
         """Build a map of hotkey_str → [profiles that handle it]."""
         mapping: dict[str, list[Profile]] = {}
-        for profile in self.PROFILES:
+        for profile in self.profiles:
             for hk in profile.hotkeys:
                 mapping.setdefault(hk, []).append(profile)
         return mapping
@@ -930,8 +923,23 @@ class App:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def main() -> int:
-    """Run the app until it quits. Returns the process exit code."""
+def main(settings_path: Path = SETTINGS_PATH) -> int:
+    """Run the app until it quits. Returns the process exit code.
+
+    Settings are read once, here, so a missing or invalid settings.json stops
+    the app with a dialog naming the problem (exit code 1) before any hotkey
+    is hooked.
+    """
+    try:
+        settings = load_settings(settings_path)
+    except SettingsError as exc:
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            str(exc),
+            "send_to_window - cannot start",
+            0x10,  # MB_ICONERROR
+        )
+        return 1
     # Kept for the life of the process; Windows releases it on exit.
     instance = acquire_single_instance(wait_seconds=5 if RESTART_FLAG in sys.argv else 0)
     if instance is None:
@@ -943,5 +951,5 @@ def main() -> int:
             0x40,  # MB_ICONINFORMATION
         )
         return 0
-    App().run()
+    App(settings).run()
     return 0

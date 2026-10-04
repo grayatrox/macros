@@ -1,0 +1,9 @@
+{
+  "username": "YourMinecraftName",
+  "vote_sites": {
+    "play.example.net": [
+      "https://minecraftservers.org/vote/000000",
+      "https://www.planetminecraft.com/server/example/vote/"
+    ]
+  }
+}

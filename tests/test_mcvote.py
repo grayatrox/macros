@@ -108,3 +108,41 @@ def test_open_vote_pages_works_without_selenium(
     monkeypatch.setattr(fresh, "FIREFOX_PATHS", [str(exe)])
     assert fresh.open_vote_pages(URLS, callback=lambda _m: None) == 2
     assert popen == [[str(exe), *URLS]]
+
+
+# ── python -m macros.mcvote: username from settings.json (OP #654) ───────────
+
+
+@pytest.fixture
+def votes(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, list[str]]]:
+    """Records vote() calls; the real one drives Selenium and a browser."""
+    calls: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(mcvote, "vote", lambda username, urls: calls.append((username, urls)))
+    return calls
+
+
+def test_main_votes_with_the_configured_username(
+    votes: list[tuple[str, list[str]]], tmp_path: Path
+) -> None:
+    settings = tmp_path / "settings.json"
+    settings.write_text('{"username": "Steve"}', encoding="utf-8")
+    assert mcvote.main(URLS, settings) == 0
+    assert votes == [("Steve", URLS)]
+
+
+def test_main_fails_without_settings(
+    votes: list[tuple[str, list[str]]], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert mcvote.main(URLS, tmp_path / "settings.json") == 1
+    assert votes == []
+    assert "settings.example.json" in capsys.readouterr().err
+
+
+def test_main_needs_at_least_one_url(
+    votes: list[tuple[str, list[str]]], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    settings = tmp_path / "settings.json"
+    settings.write_text('{"username": "Steve"}', encoding="utf-8")
+    assert mcvote.main([], settings) == 2
+    assert votes == []
+    assert "usage" in capsys.readouterr().err

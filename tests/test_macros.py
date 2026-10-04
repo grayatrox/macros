@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import ctypes
+from pathlib import Path
 from typing import Any
 
 import psutil
 import pytest
 
 from macros import app as macros_app
-from macros.app import App, MinecraftProfile, Profile, server_from_cmdline
+from macros.app import App, MinecraftProfile, Profile, make_profiles, server_from_cmdline
+from macros.settings import Settings
 
 STRAYA = MinecraftProfile.STRAYA
 
@@ -96,15 +99,52 @@ def test_get_server_cached_result_is_reused(processes: list[FakeProc]) -> None:
 # ── MinecraftProfile._vote_urls_for ──────────────────────────────────────────
 
 
+VOTE_URLS = ("https://a.example/vote", "https://b.example/vote")
+SETTINGS = Settings(username="Steve", vote_sites={STRAYA: VOTE_URLS})
+
+
 def test_vote_urls_for_known_server() -> None:
-    urls = MinecraftProfile()._vote_urls_for(STRAYA)
-    assert urls == MinecraftProfile.VOTE_SITES[0]["voteurls"]
-    assert all(url.startswith("https://") for url in urls)
+    urls = MinecraftProfile(vote_sites=SETTINGS.vote_sites)._vote_urls_for(STRAYA)
+    assert urls == list(VOTE_URLS)
 
 
 @pytest.mark.parametrize("server", [None, "play.example.net"])
 def test_vote_urls_for_unknown_server(server: str | None) -> None:
-    assert MinecraftProfile()._vote_urls_for(server) == []
+    profile = MinecraftProfile(vote_sites=SETTINGS.vote_sites)
+    assert profile._vote_urls_for(server) == []
+
+
+def test_vote_urls_empty_without_settings() -> None:
+    assert MinecraftProfile()._vote_urls_for(STRAYA) == []
+
+
+def test_make_profiles_passes_vote_sites_to_minecraft() -> None:
+    (minecraft,) = [p for p in make_profiles(SETTINGS) if isinstance(p, MinecraftProfile)]
+    assert minecraft._vote_urls_for(STRAYA) == list(VOTE_URLS)
+
+
+# ── main: settings are loaded first and fail loudly (OP #654) ────────────────
+
+
+def test_main_refuses_to_start_without_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    shown: list[str] = []
+    monkeypatch.setattr(
+        ctypes.windll.user32,
+        "MessageBoxW",
+        lambda _hwnd, text, _title, _flags: shown.append(text),
+    )
+
+    def must_not_start(*_args: object) -> None:
+        raise AssertionError("App started without valid settings")
+
+    monkeypatch.setattr(macros_app, "App", must_not_start)
+    monkeypatch.setattr(macros_app, "acquire_single_instance", must_not_start)
+
+    assert macros_app.main(tmp_path / "settings.json") == 1
+    assert len(shown) == 1
+    assert "settings.example.json" in shown[0]
 
 
 # ── App._collect_all_hotkeys ─────────────────────────────────────────────────
@@ -120,15 +160,17 @@ class KeysProfile(Profile):
         return dict.fromkeys(self._keys, print)
 
 
-def test_collect_all_hotkeys_groups_profiles_by_key(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_collect_all_hotkeys_groups_profiles_by_key() -> None:
     a, b = KeysProfile("A", ["f1", "f2"]), KeysProfile("B", ["f2"])
-    monkeypatch.setattr(App, "PROFILES", [a, b])
     app = App.__new__(App)  # skip __init__: it opens the Tk log window
+    app.profiles = [a, b]
     assert app._collect_all_hotkeys() == {"f1": [a], "f2": [a, b]}
 
 
 def test_default_profiles_register_the_minecraft_keys() -> None:
-    mapping = App.__new__(App)._collect_all_hotkeys()
+    app = App.__new__(App)  # skip __init__: it opens the Tk log window
+    app.profiles = make_profiles(SETTINGS)
+    mapping = app._collect_all_hotkeys()
     assert set(mapping) >= {"*f20", "*f22", "*f23", "*f24"}
 
 
