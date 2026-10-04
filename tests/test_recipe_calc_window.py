@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import sys
 import time
 import zipfile
 from collections.abc import Callable, Iterator
@@ -482,3 +483,99 @@ def test_a_new_search_restarts_icon_filling_for_the_new_rows(
 
     wait_for(lambda: not window.items_list.item(0).icon().isNull())
     assert window.items_list.count() == 1
+
+
+# ── Errors must be visible without a console (OP #685) ───────────────────────
+
+
+@pytest.fixture
+def error_reporting(
+    qapp: QtWidgets.QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[tuple[Path, list[str]]]:
+    """Install the hooks with a temp log file and a recording dialog."""
+    import logging
+    import threading
+
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+    monkeypatch.setattr(threading, "excepthook", threading.excepthook)
+    root = logging.getLogger()
+    handlers_before = list(root.handlers)
+    shown: list[str] = []
+    log_path = tmp_path / "recipe_calc.log"
+    reporter = calc_app.install_error_reporting(log_path, shown.append)
+    yield log_path, shown
+    for handler in list(root.handlers):
+        if handler not in handlers_before:
+            root.removeHandler(handler)
+            handler.close()
+    reporter.deleteLater()
+
+
+def test_exception_in_a_qt_slot_is_logged_to_file_and_shown(
+    error_reporting: tuple[Path, list[str]],
+) -> None:
+    log_path, shown = error_reporting
+
+    class Emitter(QtCore.QObject):
+        fired = QtCore.Signal()
+
+    def broken_slot() -> None:
+        raise ValueError("slot blew up")
+
+    emitter = Emitter()
+    emitter.fired.connect(broken_slot)
+    emitter.fired.emit()
+
+    text = log_path.read_text(encoding="utf-8")
+    assert "ValueError: slot blew up" in text
+    assert "Traceback" in text
+    assert len(shown) == 1
+    assert "slot blew up" in shown[0]
+
+
+def test_exception_on_a_worker_thread_is_logged_to_file_and_shown(
+    error_reporting: tuple[Path, list[str]], qapp: QtWidgets.QApplication
+) -> None:
+    import threading
+
+    log_path, shown = error_reporting
+
+    def broken_worker() -> None:
+        raise RuntimeError("worker blew up")
+
+    thread = threading.Thread(target=broken_worker)
+    thread.start()
+    thread.join()
+    # The dialog is queued to the GUI thread, so it appears once events run.
+    deadline = time.monotonic() + 5
+    while not shown and time.monotonic() < deadline:
+        qapp.processEvents()
+
+    assert "RuntimeError: worker blew up" in log_path.read_text(encoding="utf-8")
+    assert len(shown) == 1
+    assert "worker blew up" in shown[0]
+
+
+def test_a_failing_dialog_does_not_hide_the_original_error(
+    qapp: QtWidgets.QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import logging
+
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+    root = logging.getLogger()
+    handlers_before = list(root.handlers)
+    log_path = tmp_path / "recipe_calc.log"
+
+    def broken_dialog(_text: str) -> None:
+        raise OSError("no display")
+
+    reporter = calc_app.install_error_reporting(log_path, broken_dialog)
+    try:
+        reporter.report(ValueError, ValueError("original"), None)
+        assert "ValueError: original" in log_path.read_text(encoding="utf-8")
+    finally:
+        for handler in list(root.handlers):
+            if handler not in handlers_before:
+                root.removeHandler(handler)
+                handler.close()
+        reporter.deleteLater()

@@ -22,9 +22,12 @@ import re
 import sys
 import threading
 import time
+import traceback
 import zipfile
 from collections.abc import Callable
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from types import TracebackType
 from typing import Any, override
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -977,11 +980,91 @@ class RecipeCalculator(QtWidgets.QWidget):
         event.accept()
 
 
+LOG_PATH = CONFIG_PATH.with_name("recipe_calc.log")
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+
+def show_error_dialog(text: str) -> None:
+    """Tell the user something went wrong; the details are in the log file."""
+    QtWidgets.QMessageBox.critical(None, "Recipe Calc - unexpected error", text)
+
+
+class ErrorReporter(QtCore.QObject):
+    """Logs uncaught exceptions and shows them in a dialog on the GUI thread.
+
+    The launcher starts Recipe Calc without a console, so stderr is invisible:
+    an exception in a Qt slot or a worker thread would otherwise vanish.
+    """
+
+    _failed = QtCore.Signal(str)
+
+    def __init__(self, show: Callable[[str], None]) -> None:
+        super().__init__()
+        self._show = show
+        # Queued automatically when emitted from a worker thread, so the dialog
+        # is always created on the GUI thread this object lives in.
+        self._failed.connect(self._on_failed)
+
+    def report(
+        self, exc_type: type[BaseException], value: BaseException, tb: TracebackType | None
+    ) -> None:
+        """Log the exception with its traceback, then show it to the user."""
+        details = "".join(traceback.format_exception(exc_type, value, tb))
+        log.error("Unhandled exception\n%s", details)
+        self._failed.emit(f"{exc_type.__name__}: {value}\n\nDetails are in {LOG_PATH}")
+
+    def report_thread(self, args: threading.ExceptHookArgs) -> None:
+        """threading.excepthook adapter."""
+        if args.exc_type is SystemExit or args.exc_value is None:
+            return
+        self.report(args.exc_type, args.exc_value, args.exc_traceback)
+
+    @QtCore.Slot(str)
+    def _on_failed(self, text: str) -> None:
+        try:
+            self._show(text)
+        except Exception:
+            # The traceback is already logged; a dialog failure must not mask it.
+            log.exception("Could not show the error dialog")
+
+
+def install_error_reporting(
+    log_path: Path, show: Callable[[str], None] = show_error_dialog
+) -> ErrorReporter:
+    """Log to `log_path` and route uncaught exceptions (GUI and threads) to it and a dialog.
+
+    Returns the reporter, which the caller must keep alive.
+    """
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    formatter = logging.Formatter(LOG_FORMAT)
+    handlers: list[logging.Handler] = []
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(
+            RotatingFileHandler(log_path, maxBytes=512_000, backupCount=1, encoding="utf-8")
+        )
+    except OSError:
+        log.warning(
+            "Could not open the log file %s; logging to stderr only", log_path, exc_info=True
+        )
+    handlers.append(logging.StreamHandler())  # stderr: visible when run from a console
+    for handler in handlers:
+        handler.setFormatter(formatter)
+        root.addHandler(handler)
+    reporter = ErrorReporter(show)
+    sys.excepthook = reporter.report
+    threading.excepthook = reporter.report_thread
+    return reporter
+
+
 def main() -> int:
     """Open the window and run until it closes. Returns the exit code."""
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     app = QtWidgets.QApplication(sys.argv)
+    reporter = install_error_reporting(LOG_PATH)
     apply_dark_theme(app)
     window = RecipeCalculator()
     window.show()
-    return app.exec()
+    code = app.exec()
+    reporter.deleteLater()
+    return code
