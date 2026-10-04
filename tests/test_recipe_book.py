@@ -1,4 +1,4 @@
-"""Tests for Recipe Calc's calculation logic (plugins/recipe_calc/recipe_book.py)."""
+"""Tests for Recipe Calc's calculation logic (recipe_calc.recipe_book)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from recipe_book import (
+from recipe_calc.recipe_book import (
     BREWING_RECIPES,
     BreakdownNode,
     JarCandidate,

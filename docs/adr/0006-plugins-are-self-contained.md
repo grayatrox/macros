@@ -73,6 +73,12 @@ sections to its `pyproject.toml`, and add its `src` to the four tool settings
 above. A single-module app with no package may stay a lone script in its
 folder; the test still holds it to the same rule.
 
+2026-10-04, #671: Recipe Calc now follows this layout. Its modules are the
+`recipe_calc` package in `plugins/recipe_calc/src/recipe_calc/` (the window
+is `app.py`, formerly `Recipe_Calc.py`), and `Recipe_Calc.py` is the entry
+script. Its `__main__` runs the same first-start install as Macros before it
+imports PySide6, so it also starts on a bare Python (#677).
+
 ## Options rejected
 
 - **Keep the code in `src/macros/` (ADR 0002).** This is what was reported as

@@ -1,4 +1,4 @@
-"""Tests for Recipe Calc's PySide6 window (plugins/recipe_calc/Recipe_Calc.py).
+"""Tests for Recipe Calc's PySide6 window (recipe_calc.app).
 
 The calculation itself is covered by test_recipe_book.py; these drive the real
 window, offscreen, against a small jar built in a temp folder.
@@ -18,10 +18,10 @@ import pytest
 from PIL import Image
 from PySide6 import QtCore, QtWidgets
 
-import block_render
-import Recipe_Calc
-from recipe_book import JarCandidate, Placement, Slot
-from Recipe_Calc import JarAssets, RecipeCalculator, format_geometry, parse_geometry
+from recipe_calc import app as calc_app
+from recipe_calc import block_render
+from recipe_calc.app import JarAssets, RecipeCalculator, format_geometry, parse_geometry
+from recipe_calc.recipe_book import JarCandidate, Placement, Slot
 
 RECIPES = "data/minecraft/recipe/"
 TEXTURES = "assets/minecraft/textures/"
@@ -80,7 +80,7 @@ def wait_for(condition: Callable[[], bool]) -> None:
 @pytest.fixture
 def errors(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     shown: list[str] = []
-    monkeypatch.setattr(Recipe_Calc, "show_error", lambda _parent, _title, msg: shown.append(msg))
+    monkeypatch.setattr(calc_app, "show_error", lambda _parent, _title, msg: shown.append(msg))
     return shown
 
 
@@ -110,7 +110,7 @@ def select(window: RecipeCalculator, item: str) -> None:
     (row,) = [
         window.items_list.item(i)
         for i in range(window.items_list.count())
-        if window.items_list.item(i).data(Recipe_Calc.ITEM_ROLE) == item
+        if window.items_list.item(i).data(calc_app.ITEM_ROLE) == item
     ]
     row.setSelected(True)
 
@@ -229,7 +229,7 @@ def test_several_jars_let_the_user_choose(
         offered.append(candidates)
         return candidates[1]
 
-    monkeypatch.setattr(Recipe_Calc, "choose_jar", choose)
+    monkeypatch.setattr(calc_app, "choose_jar", choose)
     window = loaded(open_window([first, second]))
 
     assert offered == [[first, second]]
@@ -245,7 +245,7 @@ def test_browse_loads_the_picked_jar(
     jar = make_jar(tmp_path / "snapshot.jar")
     window = open_window([])
     wait_for(lambda: window.status_label.text().startswith("No jar"))
-    monkeypatch.setattr(Recipe_Calc, "ask_jar_file", lambda _parent: str(jar))
+    monkeypatch.setattr(calc_app, "ask_jar_file", lambda _parent: str(jar))
 
     window.browse_button.click()
 
@@ -321,7 +321,7 @@ def test_an_unreadable_config_starts_fresh(qapp: QtWidgets.QApplication, tmp_pat
     config.write_text("[1, 2]", encoding="utf-8")
     window = RecipeCalculator(config_path=config, find_jars=list)
 
-    assert (window.width(), window.height()) == Recipe_Calc.DEFAULT_SIZE
+    assert (window.width(), window.height()) == calc_app.DEFAULT_SIZE
     window.deleteLater()
 
 
@@ -329,7 +329,7 @@ def test_an_unreadable_config_starts_fresh(qapp: QtWidgets.QApplication, tmp_pat
 
 
 def test_hovering_a_slot_names_its_item(qapp: QtWidgets.QApplication) -> None:
-    view = Recipe_Calc.PlacementView(lambda _item, _big: None)
+    view = calc_app.PlacementView(lambda _item, _big: None)
     layout = Placement(
         heading="h",
         caption="default",

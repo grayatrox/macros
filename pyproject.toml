@@ -29,10 +29,9 @@ dev = [
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
-# The launcher's pluginhost package lives under src/, Macros' package under
-# plugins/macros/src/; tools/ is imported from the root; Recipe Calc's modules
-# import each other by bare name from their own folder.
-pythonpath = ["src", "plugins/macros/src", ".", "plugins/recipe_calc"]
+# The launcher's pluginhost package lives under src/, each plugin's package
+# under plugins/<app>/src/; tools/ is imported from the root.
+pythonpath = ["src", "plugins/macros/src", "plugins/recipe_calc/src", "."]
 addopts = ["--strict-markers", "--strict-config", "-ra"]
 
 # ---------------------------------------------------------------------------
@@ -42,8 +41,8 @@ addopts = ["--strict-markers", "--strict-config", "-ra"]
 line-length = 100
 target-version = "py312"
 extend-include = ["*.pyw"]  # launcher.pyw; ruff skips .pyw by default
-# first-party: pluginhost, the macros package, tools/, and Recipe Calc's modules
-src = ["src", "plugins/macros/src", ".", "plugins/recipe_calc"]
+# first-party: pluginhost, each plugin's package, and tools/
+src = ["src", "plugins/macros/src", "plugins/recipe_calc/src", "."]
 
 [tool.ruff.lint]
 select = [
@@ -81,11 +80,10 @@ python_version = "3.12"
 strict = true
 warn_unreachable = true
 files = ["plugins/macros", "plugins/recipe_calc", "launcher.pyw", "src", "tools", "tests"]
-# Recipe Calc's modules import each other by bare name, as its script runs them
-mypy_path = ["src", "plugins/macros/src", "plugins/recipe_calc"]
-# pluginhost is rooted at src/ and macros at plugins/macros/src/ (mypy_path);
-# Macros.py, tools/ and tests/ are namespace packages rooted at the repo, so
-# each file has one module name.
+mypy_path = ["src", "plugins/macros/src", "plugins/recipe_calc/src"]
+# pluginhost is rooted at src/ and each plugin's package at plugins/<app>/src/
+# (mypy_path); the entry scripts, tools/ and tests/ are namespace packages
+# rooted at the repo, so each file has one module name.
 explicit_package_bases = true
 # types-pywin32 leaves some win32clipboard functions unannotated (e.g.
 # CloseClipboard, SetClipboardData). The gap is in the third-party stubs, so

@@ -1,4 +1,4 @@
-"""Tests for Recipe Calc's block icon rendering (plugins/recipe_calc/block_render.py)."""
+"""Tests for Recipe Calc's block icon rendering (recipe_calc.block_render)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 
 from PIL import Image
 
-from block_render import BlockRenderer, item_model_ref, model_texture_ref, resolve_model
+from recipe_calc.block_render import BlockRenderer, item_model_ref, model_texture_ref, resolve_model
 
 MODELS = "assets/minecraft/models/"
 TEXTURES = "assets/minecraft/textures/"

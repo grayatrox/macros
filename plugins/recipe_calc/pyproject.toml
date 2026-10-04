@@ -1,7 +1,14 @@
-# What Recipe Calc needs at runtime. A dependency declaration for the launcher,
-# not an installable package. This is the only place these requirements are
-# declared; tools/lock.py compiles them into the hashed locks. See
-# docs/adr/0003-per-plugin-pyproject.md and docs/adr/0005-root-declares-only-the-launcher.md.
+# The Recipe Calc app: the recipe_calc package in src/ beside this file, and
+# what it needs at runtime. This is the only place these requirements are
+# declared; tools/lock.py compiles them into the hashed locks, and launcher.pyw
+# reads them to install a missing one. The package uses the launcher's
+# pluginhost (first-start install), which Recipe_Calc.py puts on sys.path. See
+# docs/adr/0005-root-declares-only-the-launcher.md and
+# docs/adr/0006-plugins-are-self-contained.md.
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "recipe-calc"
 version = "0.1.0"
@@ -14,3 +21,6 @@ dependencies = [
     # without it, but the rendered icons are the normal experience.
     "pillow>=11,<12",
 ]
+
+[tool.setuptools.packages.find]
+where = ["src"]
