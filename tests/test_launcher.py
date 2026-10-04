@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
-import tkinter as tk
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import ttk
 from types import ModuleType
 from typing import Any
 
 import pytest
+from PySide6 import QtCore, QtGui, QtTest, QtWidgets
 
 
 def _touch(path: Path) -> Path:
@@ -171,51 +172,46 @@ def test_a_manifest_naming_a_folder_is_reported(launcher: ModuleType, tmp_path: 
 @dataclass
 class _Window:
     app: Any
-    entry: ttk.Entry
+    entry: QtWidgets.QLineEdit
     errors: list[str]
     warnings: list[str]
 
 
-def _entries(widget: tk.Misc) -> list[ttk.Entry]:
-    found = [widget] if isinstance(widget, ttk.Entry) else []
-    for child in widget.winfo_children():
-        found += _entries(child)
-    return found
-
-
 def _listed(window: _Window) -> list[str]:
     tree = window.app.tree
+    folders = [tree.topLevelItem(i) for i in range(tree.topLevelItemCount())]
     return sorted(
-        tree.item(item, "text").strip()
-        for folder in tree.get_children()
-        for item in tree.get_children(folder)
+        folder.child(j).text(0).strip() for folder in folders for j in range(folder.childCount())
     )
 
 
 def _type(window: _Window, text: str) -> None:
-    window.entry.delete(0, "end")
-    window.entry.insert(0, text)
+    window.entry.setText(text)
 
 
 def _commit_by_leaving(window: _Window) -> None:
-    # Generated key events only reach the window holding OS focus, which a test
-    # cannot rely on; FocusOut is delivered straight to the widget.
-    window.entry.event_generate("<FocusOut>")
+    # Real focus changes need a window holding OS focus, which a test cannot
+    # rely on; the FocusOut event is delivered straight to the widget instead.
+    focus_out = QtGui.QFocusEvent(QtCore.QEvent.Type.FocusOut, QtCore.Qt.FocusReason.TabFocusReason)
+    QtWidgets.QApplication.sendEvent(window.entry, focus_out)
 
 
 @pytest.fixture(scope="module")
-def tk_root() -> Iterator[tk.Tk]:
-    # One interpreter for the module: creating a fresh tk.Tk per test
-    # intermittently fails on Windows to read Tcl's own init scripts.
-    root = tk.Tk()
-    root.withdraw()
-    yield root
-    root.destroy()
+def qapp() -> QtWidgets.QApplication:
+    # No real windows during a test run. Set before the QApplication exists,
+    # which is never destroyed: Qt allows only one per process.
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    assert isinstance(app, QtWidgets.QApplication)
+    return app
 
 
 @pytest.fixture
 def window(
-    launcher: ModuleType, tk_root: tk.Tk, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType,
+    qapp: QtWidgets.QApplication,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[_Window]:
     start = tmp_path / "start"
     _app(start, "first.py")
@@ -223,24 +219,21 @@ def window(
     settings.write_text(json.dumps({"last_folder": str(start)}), encoding="utf-8")
     monkeypatch.setattr(launcher, "SETTINGS_FILE", settings)
     errors: list[str] = []
-    monkeypatch.setattr(launcher.messagebox, "showerror", lambda _title, msg: errors.append(msg))
+    monkeypatch.setattr(launcher, "show_error", lambda _parent, _title, msg: errors.append(msg))
     warnings: list[str] = []
-    monkeypatch.setattr(
-        launcher.messagebox, "showwarning", lambda _title, msg: warnings.append(msg)
-    )
+    monkeypatch.setattr(launcher, "show_warning", lambda _parent, _title, msg: warnings.append(msg))
 
-    top = tk.Toplevel(tk_root)
-    top.withdraw()
+    app = launcher.PythonLauncherGUI()
     try:
-        app = launcher.PythonLauncherGUI(top)
-        (entry,) = _entries(top)
+        (entry,) = app.findChildren(QtWidgets.QLineEdit)
         yield _Window(app, entry, errors, warnings)
     finally:
-        top.destroy()
+        app.poll_timer.stop()
+        app.deleteLater()
 
 
 def test_folder_box_starts_with_the_saved_folder_scanned(window: _Window, tmp_path: Path) -> None:
-    assert window.entry.get() == str(tmp_path / "start")
+    assert window.entry.text() == str(tmp_path / "start")
     assert _listed(window) == ["first.py"]
 
 
@@ -250,16 +243,15 @@ def test_typing_a_folder_and_leaving_the_box_rescans_it(window: _Window, tmp_pat
     _type(window, str(other))
     _commit_by_leaving(window)
     assert window.errors == []
-    assert window.app.selected_folder.get() == str(other)
+    assert window.entry.text() == str(other)
     assert _listed(window) == ["second.py"]
 
 
 def test_enter_commits_the_typed_folder(window: _Window, tmp_path: Path) -> None:
     other = tmp_path / "other"
     _app(other, "second.py")
-    assert window.entry.bind("<Return>")
     _type(window, str(other))
-    window.app.commit_folder()
+    QtTest.QTest.keyClick(window.entry, QtCore.Qt.Key.Key_Return)
     assert _listed(window) == ["second.py"]
 
 
@@ -275,7 +267,7 @@ def test_pasted_path_in_quotes_is_accepted(window: _Window, tmp_path: Path) -> N
     _type(window, f'  "{other}"  ')
     _commit_by_leaving(window)
     assert window.errors == []
-    assert window.entry.get() == str(other)
+    assert window.entry.text() == str(other)
     assert _listed(window) == ["second.py"]
 
 
@@ -287,7 +279,7 @@ def test_missing_folder_is_rejected_and_the_previous_one_kept(
     _commit_by_leaving(window)
     assert len(window.errors) == 1
     assert str(missing) in window.errors[0]
-    assert window.entry.get() == str(tmp_path / "start")
+    assert window.entry.text() == str(tmp_path / "start")
     assert _listed(window) == ["first.py"]
 
 
@@ -295,7 +287,7 @@ def test_a_file_is_rejected_as_a_folder(window: _Window, tmp_path: Path) -> None
     _type(window, str(tmp_path / "start" / "first.py"))
     _commit_by_leaving(window)
     assert len(window.errors) == 1
-    assert window.entry.get() == str(tmp_path / "start")
+    assert window.entry.text() == str(tmp_path / "start")
     assert _listed(window) == ["first.py"]
 
 
@@ -306,7 +298,7 @@ def test_empty_folder_box_is_rejected_and_the_previous_one_kept(
     _type(window, text)
     _commit_by_leaving(window)
     assert window.errors == ["Enter a folder to scan."]
-    assert window.entry.get() == str(tmp_path / "start")
+    assert window.entry.text() == str(tmp_path / "start")
     assert _listed(window) == ["first.py"]
 
 
@@ -316,7 +308,7 @@ def test_scan_button_with_a_bad_typed_path_keeps_the_previous_folder(
     _type(window, str(tmp_path / "does-not-exist"))
     window.app.scan_folder()
     assert len(window.errors) == 1
-    assert window.entry.get() == str(tmp_path / "start")
+    assert window.entry.text() == str(tmp_path / "start")
     assert _listed(window) == ["first.py"]
 
 
@@ -331,9 +323,9 @@ def test_browse_still_updates_the_box_and_rescans(
 ) -> None:
     other = tmp_path / "other"
     _app(other, "second.py")
-    monkeypatch.setattr(launcher.filedialog, "askdirectory", lambda **_kw: str(other))
+    monkeypatch.setattr(launcher, "ask_directory", lambda _parent, _title, _start: str(other))
     window.app.pick_folder()
-    assert window.entry.get() == str(other)
+    assert window.entry.text() == str(other)
     assert _listed(window) == ["second.py"]
 
 
@@ -358,3 +350,95 @@ def test_a_folder_with_no_apps_lists_nothing_and_does_not_warn(
     assert window.errors == []
     assert window.warnings == []
     assert _listed(window) == []
+
+
+# ── launching ────────────────────────────────────────────────────────────────
+
+
+class _FakeProc:
+    """Stands in for a launched script's Popen handle."""
+
+    pid = 4242
+
+    def __init__(self) -> None:
+        self.alive = True
+
+    def poll(self) -> int | None:
+        return None if self.alive else 0
+
+    def terminate(self) -> None:
+        self.alive = False
+
+    def wait(self, timeout: float | None = None) -> int:
+        return 0
+
+
+@pytest.fixture
+def started(launcher: ModuleType, monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, _FakeProc]]:
+    procs: list[tuple[Any, _FakeProc]] = []
+
+    def popen(args: Any, **_kw: Any) -> _FakeProc:
+        proc = _FakeProc()
+        procs.append((args, proc))
+        return proc
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    return procs
+
+
+def _launch_first(window: _Window, tmp_path: Path) -> str:
+    script = str(tmp_path / "start" / "first.py")
+    window.app.tree.setCurrentItem(window.app.items_by_path[script])
+    window.app.launch_button.click()
+    return script
+
+
+def test_launch_shows_the_pid_and_stop_clears_it(
+    launcher: ModuleType,
+    window: _Window,
+    tmp_path: Path,
+    started: list[tuple[Any, _FakeProc]],
+) -> None:
+    assert not window.app.stop_button.isEnabled()
+    script = _launch_first(window, tmp_path)
+    ((args, proc),) = started
+    assert args == [launcher.PYTHON_EXE, script]
+    item = window.app.items_by_path[script]
+    assert item.text(1) == "PID 4242"
+    assert window.app.stop_button.isEnabled()
+    assert window.app.launch_button.text() == "Restart Selected File"
+
+    window.app.stop_button.click()
+    assert not proc.alive
+    assert item.text(1) == ""
+    assert not window.app.stop_button.isEnabled()
+    assert window.app.launch_button.text() == "Launch Selected File"
+
+
+def test_a_script_that_exits_is_cleared_by_the_poll(
+    window: _Window, tmp_path: Path, started: list[tuple[Any, _FakeProc]]
+) -> None:
+    script = _launch_first(window, tmp_path)
+    ((_args, proc),) = started
+    proc.alive = False
+    window.app.poll_processes()
+    assert window.app.items_by_path[script].text(1) == ""
+    assert not window.app.stop_button.isEnabled()
+
+
+# ── first start ──────────────────────────────────────────────────────────────
+
+
+def test_a_failed_first_start_install_is_shown_and_exits(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail() -> None:
+        raise launcher.BootstrapError("no network")
+
+    monkeypatch.setattr(launcher, "ensure_dependencies", fail)
+    shown: list[str] = []
+    monkeypatch.setattr(launcher, "show_native_error", lambda _title, msg: shown.append(msg))
+    with pytest.raises(SystemExit) as exc:
+        launcher.bootstrap()
+    assert exc.value.code == 1
+    assert shown == ["no network"]

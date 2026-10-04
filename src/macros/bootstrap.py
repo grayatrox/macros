@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 
-#: Import names the app needs; one per package is enough to detect it.
+#: Import names the app (and launcher.pyw) needs; one per package is enough to detect it.
 REQUIRED_MODULES = (
     "keyboard",
     "psutil",
@@ -51,6 +51,7 @@ REQUIRED_MODULES = (
     "win32gui",
     "win32process",
     "PIL",
+    "PySide6",  # launcher.pyw's GUI
 )
 
 ROOT = Path(__file__).resolve().parents[2]

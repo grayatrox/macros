@@ -25,9 +25,10 @@ Small Windows tools for gaming, mostly Minecraft:
   vote. `python -m macros.mcvote` runs the older fully automatic Selenium
   flow for captcha-free findmcserver.com pages.
 
-- **`launcher.pyw`**: a small GUI that lists the apps in a folder and its
-  subfolders, and starts or stops them. It needs no third-party packages. An
-  app is a script declared by a `launcher-app.toml` (see Configure).
+- **`launcher.pyw`**: a small PySide6 (Qt) GUI that lists the apps in a folder
+  and its subfolders, and starts or stops them. Like `Macros.py`, it installs
+  its components on first start (see Install). An app is a script declared by
+  a `launcher-app.toml` (see Configure).
 
 `Recipe Calc/` is a separate project with its own tracker and is not covered
 here.
@@ -36,7 +37,8 @@ here.
 
 Windows and Python 3.12 or newer. To just use the app, copy
 `settings.example.json` to `settings.json`, fill in your values (see
-[Configure](#configure)), and run it (see [Run](#run)). On first start it installs its own components into
+[Configure](#configure)), and run it (see [Run](#run)). On first start it (or
+`launcher.pyw`) installs its own components into
 `%LOCALAPPDATA%\Macros\deps-py312` (one folder per Python version), showing a
 small progress window. Your Python installation is not modified.
 

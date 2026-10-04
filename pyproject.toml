@@ -4,8 +4,9 @@ version = "0.1.0"
 description = "Per-application global hotkey macros in a system-tray app, plus helper scripts."
 requires-python = ">=3.12"
 
-# Runtime dependencies of Macros.py. Pinned with hashes in requirements.lock
-# (regenerate with `python tools/lock.py`); these ranges only bound the resolver.
+# Runtime dependencies of Macros.py and launcher.pyw. Pinned with hashes in
+# requirements.lock (regenerate with `python tools/lock.py`); these ranges only
+# bound the resolver.
 dependencies = [
     "pystray>=0.19,<0.20",
     "keyboard>=0.13,<0.14",
@@ -13,6 +14,8 @@ dependencies = [
     "pywin32>=311",
     "psutil>=7,<8",
     "pillow>=11,<12",
+    # launcher.pyw's GUI. Essentials holds QtWidgets without the large Addons.
+    "PySide6-Essentials>=6.11,<6.12",
 ]
 
 [project.optional-dependencies]

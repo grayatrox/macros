@@ -1,11 +1,15 @@
 #!/usr/bin/env pythonw
 """
 Python File Launcher GUI
-A dark-themed tkinter application to scan folders for Python files and launch them.
+A dark-themed PySide6 (Qt) application to scan folders for Python files and launch them.
 
 Saved as .pyw so double-clicking runs it under pythonw.exe with no console
 window. Run `python launcher.pyw` from a terminal if you want tracebacks on
 stderr; otherwise startup and callback errors are reported in a dialog.
+
+PySide6 is a third-party package. Run as a script, the launcher first makes it
+importable through the same first-start install as Macros.py (hash-pinned, into
+a private folder; see src/macros/bootstrap.py), so a bare Python still works.
 
 Single-instance mode (on by default) keeps one running process per script. The
 launcher holds the Popen handle for everything it starts, so a PID is only ever
@@ -17,13 +21,45 @@ import ctypes
 import json
 import subprocess
 import sys
-import tkinter as tk
-import tkinter.font as tkfont
 import tomllib
 import traceback
 from pathlib import Path, PurePath
-from tkinter import filedialog, messagebox, ttk
-from typing import Any, NamedTuple
+from types import TracebackType
+from typing import Any, NamedTuple, override
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+
+from macros.bootstrap import BootstrapError, ensure_dependencies  # needs src on sys.path
+
+MB_ICONERROR = 0x10
+
+
+def show_native_error(title: str, message: str) -> None:
+    """A Windows message box: the only dialog available before PySide6 is."""
+    ctypes.windll.user32.MessageBoxW(0, message, title, MB_ICONERROR)
+
+
+def bootstrap() -> None:
+    """Make PySide6 importable, installing it on first start.
+
+    Raises:
+        SystemExit: the install failed; the reason has been shown in a dialog.
+    """
+    try:
+        ensure_dependencies()
+    except BootstrapError as exc:
+        show_native_error("Python File Launcher - cannot start", str(exc))
+        raise SystemExit(1) from exc
+
+
+if __name__ == "__main__":
+    bootstrap()
+
+from PySide6 import (  # noqa: E402 - importable only once bootstrap() has run
+    QtCore,
+    QtGui,
+    QtWidgets,
+)
 
 # Settings file location
 SETTINGS_FILE = Path.home() / ".python_launcher_settings.json"
@@ -159,13 +195,16 @@ def find_apps(folder: Path) -> AppScan:
     return AppScan(scripts, problems)
 
 
-def make_window_icon(master: tk.Misc | None = None) -> tk.PhotoImage:
+# Where a file row keeps its full path; folder rows have none
+PATH_ROLE = QtCore.Qt.ItemDataRole.UserRole
+FILE_COLUMN, STATUS_COLUMN = 0, 1
+
+
+def make_window_icon() -> QtGui.QIcon:
     """Draw the launcher's icon: an accent play-triangle on a dark rounded tile.
 
-    Pixel art rather than PIL - this file deliberately has no third-party
-    dependencies. Pass the window it belongs to so the PhotoImage binds to that
-    interpreter rather than whichever root is default. '.' is left transparent
-    to round the corners.
+    Pixel art drawn in code, so the launcher ships no image file. '.' is left
+    transparent to round the corners. Needs a QApplication.
     """
     rows = [
         ".DDDDDDDDDDDDDD.",
@@ -185,32 +224,108 @@ def make_window_icon(master: tk.Misc | None = None) -> tk.PhotoImage:
         "DDDDDDDDDDDDDDDD",
         ".DDDDDDDDDDDDDD.",
     ]
-    colors = {"D": SURFACE, "A": ACCENT}
-    icon = tk.PhotoImage(master=master, width=16, height=16)
+    colors = {"D": QtGui.QColor(SURFACE), "A": QtGui.QColor(ACCENT)}
+    image = QtGui.QImage(16, 16, QtGui.QImage.Format.Format_ARGB32)
+    image.fill(QtCore.Qt.GlobalColor.transparent)
     for y, row in enumerate(rows):
         for x, char in enumerate(row):
             if char in colors:
-                icon.put(colors[char], (x, y))
-    return icon.zoom(4)
+                image.setPixelColor(x, y, colors[char])
+    # The default (nearest-neighbour) scaling keeps the pixels crisp
+    return QtGui.QIcon(QtGui.QPixmap.fromImage(image.scaled(64, 64)))
 
 
-def pick_font_family(root: tk.Misc) -> str:
+def pick_font_family() -> str:
     """Return the nicest UI font family available on this platform."""
-    families = set(tkfont.families(root))
+    families = set(QtGui.QFontDatabase.families())
     for family in ("Segoe UI", "SF Pro Text", "Helvetica Neue", "Ubuntu", "DejaVu Sans", "Arial"):
         if family in families:
             return family
-    default: str = tkfont.nametofont("TkDefaultFont").cget("family")
-    return default
+    return QtWidgets.QApplication.font().family()
 
 
-def apply_dark_titlebar(window: tk.Tk) -> None:
+def stylesheet() -> str:
+    """The launcher's Qt style sheet, built from the dark palette."""
+    rules = [
+        f"QWidget {{ background: {BG}; color: {TEXT}; }}",
+        f'QLabel[role="heading"] {{ color: {MUTED}; font-size: 9pt; }}',
+        f"QLabel#status {{ background: {SURFACE}; color: {MUTED}; font-size: 9pt;"
+        " padding: 6px 10px; }",
+        # Buttons -- flat, no 3D bevel
+        f"QPushButton {{ background: {ELEVATED}; color: {TEXT}; border: none;"
+        " padding: 7px 14px; }",
+        f"QPushButton:hover {{ background: {BORDER}; }}",
+        f"QPushButton:pressed {{ background: {ELEVATED}; }}",
+    ]
+    for role, fill, hover in (
+        ("accent", GREEN, GREEN_HOVER),
+        ("launch", ACCENT, ACCENT_HOVER),
+        ("danger", RED, RED_HOVER),
+    ):
+        selector = f'QPushButton[role="{role}"]'
+        rules += [
+            f"{selector} {{ background: {fill}; color: #ffffff; }}",
+            f"{selector}:hover {{ background: {hover}; }}",
+            f"{selector}:pressed {{ background: {fill}; }}",
+            f"{selector}:disabled {{ background: {SURFACE}; color: {MUTED}; }}",
+        ]
+    rules += [
+        f"QPushButton:disabled {{ background: {SURFACE}; color: {MUTED}; }}",
+        'QPushButton[role="launch"] { font-weight: bold; padding: 10px 14px; }',
+        # Editable path entry
+        f"QLineEdit {{ background: {SURFACE}; border: 1px solid {BORDER}; padding: 6px;"
+        f" selection-background-color: {ACCENT}; selection-color: #ffffff; }}",
+        f"QLineEdit:focus {{ border-color: {ACCENT}; }}",
+        # File tree -- flat dark rows, readable selection
+        f"QTreeWidget {{ background: {SURFACE}; border: 1px solid {BORDER}; }}",
+        "QTreeWidget::item { height: 24px; }",
+        f"QTreeWidget::item:selected {{ background: {ACCENT}; color: #ffffff; }}",
+        f"QHeaderView::section {{ background: {ELEVATED}; color: {MUTED}; border: none;"
+        " padding: 6px 8px; font-size: 9pt; }",
+        # Scrollbar
+        f"QScrollBar:vertical {{ background: {SURFACE}; width: 12px; margin: 0; }}",
+        f"QScrollBar::handle:vertical {{ background: {ELEVATED}; min-height: 24px; }}",
+        f"QScrollBar::handle:vertical:hover {{ background: {BORDER}; }}",
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }",
+        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }",
+        "QRadioButton, QCheckBox { padding: 3px 0; }",
+    ]
+    return "\n".join(rules)
+
+
+def apply_dark_theme(app: QtWidgets.QApplication) -> None:
+    """Fusion with the dark palette, so dialogs match the window too."""
+    app.setStyle("Fusion")
+    palette = QtGui.QPalette()
+    role = QtGui.QPalette.ColorRole
+    for color_role, color in (
+        (role.Window, BG),
+        (role.WindowText, TEXT),
+        (role.Base, SURFACE),
+        (role.AlternateBase, ELEVATED),
+        (role.Text, TEXT),
+        (role.Button, ELEVATED),
+        (role.ButtonText, TEXT),
+        (role.Highlight, ACCENT),
+        (role.HighlightedText, "#ffffff"),
+        (role.ToolTipBase, SURFACE),
+        (role.ToolTipText, TEXT),
+        (role.PlaceholderText, MUTED),
+    ):
+        palette.setColor(color_role, QtGui.QColor(color))
+    for color_role in (role.WindowText, role.Text, role.ButtonText):
+        palette.setColor(QtGui.QPalette.ColorGroup.Disabled, color_role, QtGui.QColor(MUTED))
+    app.setPalette(palette)
+    app.setFont(QtGui.QFont(pick_font_family(), 10))
+    app.setStyleSheet(stylesheet())
+
+
+def apply_dark_titlebar(window: QtWidgets.QWidget) -> None:
     """Ask DWM for a dark title bar (Windows 10 1809+); no-op elsewhere."""
     if sys.platform != "win32":
         return
     try:
-        window.update_idletasks()
-        hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
+        hwnd = int(window.winId())
         enabled = ctypes.c_int(1)
         # 20 = DWMWA_USE_IMMERSIVE_DARK_MODE, 19 on pre-20H1 builds
         for attribute in (20, 19):
@@ -223,42 +338,58 @@ def apply_dark_titlebar(window: tk.Tk) -> None:
         pass
 
 
-class PythonLauncherGUI:
-    def __init__(self, root: tk.Tk) -> None:
-        self.root = root
-        self.root.title("Python File Launcher")
-        self.root.geometry("760x620")
-        self.root.minsize(560, 460)
-        self.root.configure(bg=BG)
-        self.icon = make_window_icon(self.root)  # keep a reference so tk doesn't garbage-collect it
-        self.root.iconphoto(True, self.icon)
+# --- Dialogs ------------------------------------------------------------------
+# Every dialog goes through one of these, so tests can stand in for the user.
+
+
+def show_error(parent: QtWidgets.QWidget | None, title: str, message: str) -> None:
+    QtWidgets.QMessageBox.critical(parent, title, message)
+
+
+def show_warning(parent: QtWidgets.QWidget | None, title: str, message: str) -> None:
+    QtWidgets.QMessageBox.warning(parent, title, message)
+
+
+def ask_yes_no(parent: QtWidgets.QWidget | None, title: str, message: str) -> bool:
+    answer = QtWidgets.QMessageBox.question(parent, title, message)
+    return answer == QtWidgets.QMessageBox.StandardButton.Yes
+
+
+def ask_directory(parent: QtWidgets.QWidget | None, title: str, start: str) -> str:
+    """Pick a folder; returns "" if cancelled. Uses Windows-style separators."""
+    folder = QtWidgets.QFileDialog.getExistingDirectory(parent, title, start)
+    return QtCore.QDir.toNativeSeparators(folder) if folder else ""
+
+
+class PythonLauncherGUI(QtWidgets.QWidget):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setWindowTitle("Python File Launcher")
+        self.resize(760, 620)
+        self.setMinimumSize(560, 460)
+        self.setWindowIcon(make_window_icon())
 
         self.settings = self.load_settings()
 
-        # Variables
-        self.selected_folder = tk.StringVar(value=self.settings["last_folder"])
-        self.launch_mode = tk.StringVar(value=self.settings["launch_mode"])
-        self.single_instance = tk.BooleanVar(value=self.settings["single_instance"])
         self.selected_file: str | None = None
         # What the folder box goes back to when a typed path is rejected
-        self.committed_folder = self.selected_folder.get()
+        self.committed_folder = str(self.settings["last_folder"])
 
         # path -> list of Popen handles this launcher started that are still
         # alive. Reaped by poll_processes(). With single-instance off a script
         # can legitimately have several, and all of them stay stoppable.
         self.processes: dict[str, list[subprocess.Popen[bytes]]] = {}
-        # path -> tree item id, so status cells can be updated in place
-        self.items_by_path: dict[str, str] = {}
+        # path -> tree row, so status cells can be updated in place
+        self.items_by_path: dict[str, QtWidgets.QTreeWidgetItem] = {}
 
-        self.font_family = pick_font_family(root)
-        self.setup_theme()
         self.setup_ui()
-        apply_dark_titlebar(self.root)
 
-        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
-        self.root.after(POLL_MS, self.poll_processes)
+        self.poll_timer = QtCore.QTimer(self)
+        self.poll_timer.setInterval(POLL_MS)
+        self.poll_timer.timeout.connect(self.poll_processes)
+        self.poll_timer.start()
 
-        if Path(self.selected_folder.get()).is_dir():
+        if Path(self.committed_folder).is_dir():
             self.scan_folder()
 
     # --- Settings ----------------------------------------------------------
@@ -279,288 +410,133 @@ class PythonLauncherGUI:
     def save_settings(self) -> None:
         """Save current settings to JSON file."""
         try:
-            self.settings["last_folder"] = self.selected_folder.get()
+            self.settings["last_folder"] = self.path_entry.text()
             self.settings["last_file"] = self.selected_file or ""
-            self.settings["launch_mode"] = self.launch_mode.get()
-            self.settings["single_instance"] = bool(self.single_instance.get())
+            self.settings["launch_mode"] = self.launch_mode()
+            self.settings["single_instance"] = self.single_instance.isChecked()
 
             with SETTINGS_FILE.open("w", encoding="utf-8") as f:
                 json.dump(self.settings, f, indent=2)
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to save settings: {e}")
+            show_error(self, "Error", f"Failed to save settings: {e}")
 
-    # --- Theme -------------------------------------------------------------
-
-    def setup_theme(self) -> None:
-        """Configure a dark ttk theme on top of 'clam'."""
-        style = ttk.Style(self.root)
-        style.theme_use("clam")
-
-        base = (self.font_family, 10)
-        bold = (self.font_family, 10, "bold")
-        small = (self.font_family, 9)
-
-        style.configure(
-            ".",
-            background=BG,
-            foreground=TEXT,
-            font=base,
-            bordercolor=BORDER,
-            darkcolor=SURFACE,
-            lightcolor=SURFACE,
-            troughcolor=SURFACE,
-            focuscolor=BG,
-        )
-        style.configure("TFrame", background=BG)
-        style.configure("TLabel", background=BG, foreground=TEXT)
-        style.configure("Heading.TLabel", foreground=MUTED, font=small)
-        style.configure(
-            "Status.TLabel", background=SURFACE, foreground=MUTED, font=small, padding=(10, 6)
-        )
-
-        # Buttons -- flat, no 3D bevel
-        for name, fill, hover in (
-            ("TButton", ELEVATED, BORDER),
-            ("Accent.TButton", GREEN, GREEN_HOVER),
-            ("Launch.TButton", ACCENT, ACCENT_HOVER),
-            ("Danger.TButton", RED, RED_HOVER),
-        ):
-            style.configure(
-                name,
-                background=fill,
-                foreground="#ffffff" if name != "TButton" else TEXT,
-                bordercolor=fill,
-                darkcolor=fill,
-                lightcolor=fill,
-                focuscolor=fill,
-                relief="flat",
-                padding=(14, 7),
-                font=base,
-            )
-            style.map(
-                name,
-                background=[("disabled", SURFACE), ("pressed", fill), ("active", hover)],
-                bordercolor=[("disabled", SURFACE), ("active", hover)],
-                lightcolor=[("disabled", SURFACE), ("active", hover)],
-                darkcolor=[("disabled", SURFACE), ("active", hover)],
-                foreground=[("disabled", MUTED)],
-            )
-        style.configure("Launch.TButton", font=bold, padding=(14, 10))
-
-        # Editable path entry
-        style.configure(
-            "Path.TEntry",
-            fieldbackground=SURFACE,
-            foreground=TEXT,
-            bordercolor=BORDER,
-            lightcolor=BORDER,
-            darkcolor=BORDER,
-            insertcolor=TEXT,
-            selectbackground=ACCENT,
-            selectforeground="#ffffff",
-            padding=6,
-        )
-        style.map(
-            "Path.TEntry",
-            bordercolor=[("focus", ACCENT)],
-            # clam maps its own steel blue onto a focused selection
-            selectbackground=[("focus", ACCENT)],
-        )
-
-        # Check / radio indicators
-        for name in ("TCheckbutton", "TRadiobutton"):
-            style.configure(
-                name,
-                background=BG,
-                foreground=TEXT,
-                font=base,
-                indicatorbackground=SURFACE,
-                indicatorforeground=BG,
-                bordercolor=BORDER,
-                focuscolor=BG,
-                padding=(0, 3),
-            )
-            style.map(
-                name,
-                background=[("active", BG)],
-                foreground=[("disabled", MUTED)],
-                indicatorbackground=[
-                    ("selected", ACCENT),
-                    ("active", ELEVATED),
-                    ("!selected", SURFACE),
-                ],
-                indicatorforeground=[("selected", "#ffffff")],
-            )
-
-        # Treeview -- drop the sunken border, dark rows, readable selection
-        style.layout("Dark.Treeview", [("Dark.Treeview.treearea", {"sticky": "nswe"})])
-        style.configure(
-            "Dark.Treeview",
-            background=SURFACE,
-            fieldbackground=SURFACE,
-            foreground=TEXT,
-            borderwidth=0,
-            relief="flat",
-            rowheight=24,
-            font=base,
-        )
-        style.map(
-            "Dark.Treeview", background=[("selected", ACCENT)], foreground=[("selected", "#ffffff")]
-        )
-        style.configure(
-            "Dark.Treeview.Heading",
-            background=ELEVATED,
-            foreground=MUTED,
-            relief="flat",
-            borderwidth=0,
-            padding=(8, 6),
-            font=small,
-        )
-        style.map("Dark.Treeview.Heading", background=[("active", BORDER)])
-
-        # Scrollbar
-        style.configure(
-            "Dark.Vertical.TScrollbar",
-            background=ELEVATED,
-            troughcolor=SURFACE,
-            bordercolor=SURFACE,
-            arrowcolor=MUTED,
-            darkcolor=ELEVATED,
-            lightcolor=ELEVATED,
-            relief="flat",
-            arrowsize=12,
-        )
-        style.map("Dark.Vertical.TScrollbar", background=[("active", BORDER)])
-
-        # Dark-ish standard dialogs where Tk lets us
-        self.root.option_add("*Dialog.msg.font", base)
+    def launch_mode(self) -> str:
+        return "gui" if self.gui_mode.isChecked() else "console"
 
     # --- UI ----------------------------------------------------------------
 
+    @staticmethod
+    def heading(text: str) -> QtWidgets.QLabel:
+        label = QtWidgets.QLabel(text)
+        label.setProperty("role", "heading")
+        return label
+
+    @staticmethod
+    def button(text: str, role: str | None = None) -> QtWidgets.QPushButton:
+        button = QtWidgets.QPushButton(text)
+        if role:
+            button.setProperty("role", role)
+        button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        return button
+
     def setup_ui(self) -> None:
         """Setup the user interface."""
-        # Folder selection
-        folder_frame = ttk.Frame(self.root, padding=(14, 14, 14, 6))
-        folder_frame.pack(fill="x")
-
-        ttk.Label(folder_frame, text="FOLDER", style="Heading.TLabel").pack(anchor="w")
-
-        folder_row = ttk.Frame(folder_frame)
-        folder_row.pack(fill="x", pady=(4, 0))
-        self.path_entry = ttk.Entry(
-            folder_row, textvariable=self.selected_folder, style="Path.TEntry"
-        )
-        self.path_entry.pack(side="left", fill="x", expand=True)
-        self.path_entry.bind("<Return>", self.commit_folder)
-        self.path_entry.bind("<FocusOut>", self.on_folder_focus_out)
-        ttk.Button(folder_row, text="Browse", command=self.pick_folder).pack(
-            side="left", padx=(8, 0)
-        )
-        ttk.Button(folder_row, text="Scan", style="Accent.TButton", command=self.scan_folder).pack(
-            side="left", padx=(8, 0)
-        )
-
-        # File tree
-        tree_frame = ttk.Frame(self.root, padding=(14, 8))
-        tree_frame.pack(fill="both", expand=True)
-
-        ttk.Label(tree_frame, text="PYTHON FILES", style="Heading.TLabel").pack(
-            anchor="w", pady=(0, 4)
-        )
-
-        tree_body = tk.Frame(tree_frame, bg=BORDER, bd=0, highlightthickness=0)
-        tree_body.pack(fill="both", expand=True)
-
-        scrollbar = ttk.Scrollbar(tree_body, style="Dark.Vertical.TScrollbar")
-        scrollbar.pack(side="right", fill="y", padx=(0, 1), pady=1)
-
-        self.tree = ttk.Treeview(
-            tree_body,
-            style="Dark.Treeview",
-            columns=("path", "status"),
-            displaycolumns=("status",),
-            show="tree headings",
-            yscrollcommand=scrollbar.set,
-            height=12,
-            selectmode="browse",
-        )
-        self.tree.heading("#0", text="  File", anchor="w")
-        self.tree.heading("status", text="Status", anchor="w")
-        self.tree.column("#0", width=430, minwidth=200, stretch=True)
-        self.tree.column("status", width=130, minwidth=90, anchor="w", stretch=False)
-        self.tree.tag_configure("dir", foreground=MUTED)
-        self.tree.tag_configure("running", foreground=GREEN_HOVER)
-        self.tree.pack(side="left", fill="both", expand=True, padx=(1, 0), pady=1)
-        scrollbar.config(command=self.tree.yview)
-
-        self.tree.bind("<<TreeviewSelect>>", self.on_tree_select)
-        self.tree.bind("<Double-1>", self.on_tree_double_click)
-
-        # Launch options
-        options_frame = ttk.Frame(self.root, padding=(14, 8))
-        options_frame.pack(fill="x")
-
-        ttk.Label(options_frame, text="LAUNCH MODE", style="Heading.TLabel").pack(
-            anchor="w", pady=(0, 2)
-        )
-        ttk.Radiobutton(
-            options_frame, text="Console", variable=self.launch_mode, value="console"
-        ).pack(anchor="w")
-        ttk.Radiobutton(
-            options_frame, text="GUI (no console window)", variable=self.launch_mode, value="gui"
-        ).pack(anchor="w")
-        ttk.Checkbutton(
-            options_frame,
-            text="Single instance (don't launch a script twice)",
-            variable=self.single_instance,
-        ).pack(anchor="w", pady=(8, 0))
-
-        # Actions
-        launch_frame = ttk.Frame(self.root, padding=(14, 8))
-        launch_frame.pack(fill="x")
-        self.launch_button = ttk.Button(
-            launch_frame,
-            text="Launch Selected File",
-            style="Launch.TButton",
-            command=self.launch_file,
-        )
-        self.launch_button.pack(side="left", fill="x", expand=True)
-        self.stop_button = ttk.Button(
-            launch_frame,
-            text="Stop",
-            style="Danger.TButton",
-            command=self.stop_selected,
-            state="disabled",
-        )
-        self.stop_button.pack(side="left", padx=(8, 0))
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(4)
+        for section in (self.folder_section, self.tree_section, self.options_section):
+            section(layout)
+            layout.addSpacing(14)
+        self.actions_section(layout)
+        layout.addSpacing(8)
 
         # Status bar
-        self.status_label = ttk.Label(self.root, text="Ready", style="Status.TLabel", anchor="w")
-        self.status_label.pack(fill="x", padx=14, pady=(4, 14))
+        self.status_label = QtWidgets.QLabel("Ready")
+        self.status_label.setObjectName("status")
+        layout.addWidget(self.status_label)
+
+    def folder_section(self, layout: QtWidgets.QVBoxLayout) -> None:
+        layout.addWidget(self.heading("FOLDER"))
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(8)
+        self.path_entry = QtWidgets.QLineEdit(self.committed_folder)
+        self.path_entry.returnPressed.connect(self.commit_folder)
+        # Leaving the box commits it too; see eventFilter
+        self.path_entry.installEventFilter(self)
+        row.addWidget(self.path_entry, 1)
+        browse = self.button("Browse")
+        browse.clicked.connect(self.pick_folder)
+        row.addWidget(browse)
+        scan = self.button("Scan", "accent")
+        scan.clicked.connect(self.scan_folder)
+        row.addWidget(scan)
+        layout.addLayout(row)
+
+    def tree_section(self, layout: QtWidgets.QVBoxLayout) -> None:
+        layout.addWidget(self.heading("PYTHON FILES"))
+        self.tree = QtWidgets.QTreeWidget()
+        self.tree.setHeaderLabels(["File", "Status"])
+        self.tree.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
+        self.tree.setUniformRowHeights(True)
+        header = self.tree.header()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(FILE_COLUMN, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.tree.setColumnWidth(STATUS_COLUMN, 130)
+        self.tree.itemSelectionChanged.connect(self.on_tree_select)
+        self.tree.itemDoubleClicked.connect(self.on_tree_double_click)
+        layout.addWidget(self.tree, 1)
+
+    def options_section(self, layout: QtWidgets.QVBoxLayout) -> None:
+        layout.addWidget(self.heading("LAUNCH MODE"))
+        self.console_mode = QtWidgets.QRadioButton("Console")
+        self.gui_mode = QtWidgets.QRadioButton("GUI (no console window)")
+        gui = self.settings["launch_mode"] == "gui"
+        (self.gui_mode if gui else self.console_mode).setChecked(True)
+        layout.addWidget(self.console_mode)
+        layout.addWidget(self.gui_mode)
+        self.single_instance = QtWidgets.QCheckBox("Single instance (don't launch a script twice)")
+        self.single_instance.setChecked(bool(self.settings["single_instance"]))
+        layout.addSpacing(8)
+        layout.addWidget(self.single_instance)
+
+    def actions_section(self, layout: QtWidgets.QVBoxLayout) -> None:
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(8)
+        self.launch_button = self.button("Launch Selected File", "launch")
+        self.launch_button.clicked.connect(self.launch_file)
+        row.addWidget(self.launch_button, 1)
+        self.stop_button = self.button("Stop", "danger")
+        self.stop_button.clicked.connect(self.stop_selected)
+        self.stop_button.setEnabled(False)
+        row.addWidget(self.stop_button)
+        layout.addLayout(row)
 
     def set_status(self, text: str) -> None:
-        self.status_label.config(text=text)
+        self.status_label.setText(text)
 
     # --- Folder scanning ---------------------------------------------------
 
     def pick_folder(self) -> None:
         """Open folder selection dialog."""
-        folder = filedialog.askdirectory(
-            initialdir=self.selected_folder.get(),
-            title="Select Python Project Folder",
-        )
+        folder = ask_directory(self, "Select Python Project Folder", self.path_entry.text())
         if folder:
-            self.selected_folder.set(folder)
+            self.path_entry.setText(folder)
             self.scan_folder()
 
-    def commit_folder(self, _event: object = None) -> None:
+    def commit_folder(self) -> None:
         """Scan whatever has been typed into the folder box (Enter)."""
         self.scan_folder()
 
-    def on_folder_focus_out(self, _event: object = None) -> None:
+    @override
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        if watched is self.path_entry and event.type() == QtCore.QEvent.Type.FocusOut:
+            self.on_folder_focus_out()
+        return super().eventFilter(watched, event)
+
+    def on_folder_focus_out(self) -> None:
         # Only an edit is worth a rescan here. This also stops the error dialog
         # from a rejected path re-triggering itself when it takes the focus.
-        if self.selected_folder.get() != self.committed_folder:
+        if self.path_entry.text() != self.committed_folder:
             self.scan_folder()
 
     def scan_folder(self) -> None:
@@ -571,7 +547,7 @@ class PythonLauncherGUI:
         shown in a warning; the apps that are fine are still listed.
         """
         # Explorer's "Copy as path" wraps the path in double quotes
-        text = self.selected_folder.get().strip().strip('"').strip()
+        text = self.path_entry.text().strip().strip('"').strip()
         # Checked before Path(): Path("") is "." and would scan the working directory
         if not text:
             self.reject_folder("Enter a folder to scan.")
@@ -581,11 +557,10 @@ class PythonLauncherGUI:
             self.reject_folder(f"Folder not found:\n{text}")
             return
 
-        self.selected_folder.set(text)
+        self.path_entry.setText(text)
         self.committed_folder = text
 
-        for item in self.tree.get_children():
-            self.tree.delete(item)
+        self.tree.clear()
         self.items_by_path.clear()
 
         scan = find_apps(folder)
@@ -600,7 +575,7 @@ class PythonLauncherGUI:
             count += 1
 
         if scan.problems:
-            messagebox.showwarning("Some apps could not be listed", "\n\n".join(scan.problems))
+            show_warning(self, "Some apps could not be listed", "\n\n".join(scan.problems))
 
         if not count:
             self.selected_file = None
@@ -609,14 +584,13 @@ class PythonLauncherGUI:
             return
 
         for dir_name in sorted(file_dict):
-            dir_item = self.tree.insert(
-                "", "end", text=f"  {dir_name}", open=True, values=("", ""), tags=("dir",)
-            )
+            dir_item = QtWidgets.QTreeWidgetItem(self.tree, [dir_name, ""])
+            dir_item.setForeground(FILE_COLUMN, QtGui.QColor(MUTED))
             for file_name, file_path in sorted(file_dict[dir_name]):
-                item = self.tree.insert(
-                    dir_item, "end", text=f"  {file_name}", values=(file_path, "")
-                )
+                item = QtWidgets.QTreeWidgetItem(dir_item, [file_name, ""])
+                item.setData(FILE_COLUMN, PATH_ROLE, file_path)
                 self.items_by_path[file_path] = item
+            dir_item.setExpanded(True)
 
         self.refresh_status_cells()
         self.set_status(f"Found {count} app(s). Select one to launch.")
@@ -625,25 +599,25 @@ class PythonLauncherGUI:
         last_file = self.settings.get("last_file", "")
         if last_file in self.items_by_path:
             item = self.items_by_path[last_file]
-            self.tree.selection_set(item)
-            self.tree.see(item)
+            self.tree.setCurrentItem(item)
+            self.tree.scrollToItem(item)
 
     def reject_folder(self, message: str) -> None:
         # Revert before the dialog: it takes the focus, and the box's FocusOut
         # must then see nothing left to commit.
-        self.selected_folder.set(self.committed_folder)
-        messagebox.showerror("Error", message)
+        self.path_entry.setText(self.committed_folder)
+        show_error(self, "Error", message)
 
     # --- Selection ---------------------------------------------------------
 
     def current_selection_path(self) -> str | None:
-        selection = self.tree.selection()
+        selection = self.tree.selectedItems()
         if not selection:
             return None
-        values = self.tree.item(selection[0], "values")
-        return str(values[0]) if values and values[0] else None
+        path = selection[0].data(FILE_COLUMN, PATH_ROLE)
+        return str(path) if path else None
 
-    def on_tree_select(self, _event: object = None) -> None:
+    def on_tree_select(self) -> None:
         """Handle tree view selection."""
         path = self.current_selection_path()
         self.selected_file = path
@@ -659,16 +633,16 @@ class PythonLauncherGUI:
             self.set_status("Select a Python file (not a folder).")
         self.update_buttons()
 
-    def on_tree_double_click(self, _event: object = None) -> None:
+    def on_tree_double_click(self, *_args: object) -> None:
         if self.current_selection_path():
             self.launch_file()
 
     def update_buttons(self) -> None:
         running = bool(self.selected_file and self.processes.get(self.selected_file))
-        self.stop_button.config(state="normal" if running else "disabled")
-        self.launch_button.config(
-            text="Restart Selected File"
-            if running and self.single_instance.get()
+        self.stop_button.setEnabled(running)
+        self.launch_button.setText(
+            "Restart Selected File"
+            if running and self.single_instance.isChecked()
             else "Launch Selected File"
         )
 
@@ -688,13 +662,11 @@ class PythonLauncherGUI:
         if changed:
             self.refresh_status_cells()
             self.update_buttons()
-        self.root.after(POLL_MS, self.poll_processes)
 
     def refresh_status_cells(self) -> None:
         """Write the live PID(s) next to every file we currently have running."""
+        running = QtGui.QBrush(QtGui.QColor(GREEN_HOVER))
         for path, item in self.items_by_path.items():
-            if not self.tree.exists(item):
-                continue
             procs = self.processes.get(path)
             if not procs:
                 text = ""
@@ -702,8 +674,10 @@ class PythonLauncherGUI:
                 text = f"PID {procs[0].pid}"
             else:
                 text = f"{len(procs)} running"
-            self.tree.set(item, "status", text)
-            self.tree.item(item, tags=("running",) if procs else ())
+            item.setText(STATUS_COLUMN, text)
+            for column in (FILE_COLUMN, STATUS_COLUMN):
+                # An empty brush falls back to the palette's text colour
+                item.setForeground(column, running if procs else QtGui.QBrush())
 
     def terminate(self, path: str, timeout: float = 5) -> bool:
         """Stop every tracked process for a path, killing any that won't exit."""
@@ -717,10 +691,10 @@ class PythonLauncherGUI:
                     proc.kill()
                     proc.wait(timeout=timeout)
                 except Exception as e:
-                    messagebox.showerror("Error", f"Could not stop PID {proc.pid}: {e}")
+                    show_error(self, "Error", f"Could not stop PID {proc.pid}: {e}")
                     survivors.append(proc)
             except Exception as e:
-                messagebox.showerror("Error", f"Could not stop PID {proc.pid}: {e}")
+                show_error(self, "Error", f"Could not stop PID {proc.pid}: {e}")
                 survivors.append(proc)
 
         if survivors:
@@ -747,11 +721,11 @@ class PythonLauncherGUI:
         """Launch the selected Python file."""
         path = self.selected_file
         if not path:
-            messagebox.showwarning("Warning", "Please select a Python file first.")
+            show_warning(self, "Warning", "Please select a Python file first.")
             return
 
         if not Path(path).exists():
-            messagebox.showerror("Error", "Selected file no longer exists.")
+            show_error(self, "Error", "Selected file no longer exists.")
             self.scan_folder()
             return
 
@@ -759,11 +733,12 @@ class PythonLauncherGUI:
 
         # Single-instance check: we only ever compare against PIDs we started
         # ourselves, so a recycled PID can never be mistaken for a live script.
-        if self.single_instance.get():
+        if self.single_instance.isChecked():
             procs = self.processes.get(path)
             if procs:
                 pids = ", ".join(str(p.pid) for p in procs)
-                restart = messagebox.askyesno(
+                restart = ask_yes_no(
+                    self,
                     "Already running",
                     f"{name} is already running as PID {pids}.\n\nRestart it?",
                 )
@@ -778,7 +753,7 @@ class PythonLauncherGUI:
         try:
             if sys.platform != "win32":
                 proc = subprocess.Popen([PYTHON_EXE, path])
-            elif self.launch_mode.get() == "gui":
+            elif self.launch_mode() == "gui":
                 proc = subprocess.Popen(
                     [PYTHON_EXE, path], creationflags=subprocess.CREATE_NO_WINDOW
                 )
@@ -787,7 +762,7 @@ class PythonLauncherGUI:
                     [PYTHON_EXE, path], creationflags=subprocess.CREATE_NEW_CONSOLE
                 )
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to launch file: {e}")
+            show_error(self, "Error", f"Failed to launch file: {e}")
             return
 
         self.processes.setdefault(path, []).append(proc)
@@ -797,10 +772,11 @@ class PythonLauncherGUI:
 
     # --- Shutdown ----------------------------------------------------------
 
-    def on_close(self) -> None:
+    @override
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         """Persist settings and leave launched scripts running."""
         self.save_settings()
-        self.root.destroy()
+        event.accept()
 
 
 # --- Error reporting --------------------------------------------------------
@@ -813,27 +789,38 @@ def format_error(exc: BaseException) -> str:
 def report_error(title: str, details: str) -> None:
     """Show a dialog -- under pythonw there is no console to print a traceback to."""
     try:
-        messagebox.showerror(title, details)
+        # A message box without a QApplication aborts the process outright
+        if QtWidgets.QApplication.instance() is None:
+            raise RuntimeError("no QApplication")
+        show_error(None, title, details)
     except Exception:
-        # Tk itself is broken; leave something behind that can be read later.
+        # Qt itself is unusable; leave something behind that can be read later.
         with contextlib.suppress(OSError):
             SELF_PATH.with_name("launcher-error.log").write_text(details, encoding="utf-8")
 
 
-def main() -> None:
-    root = tk.Tk()
-    # Without this, exceptions raised inside Tk callbacks go to stderr, which is
+def report_uncaught(
+    _exc_type: type[BaseException], value: BaseException, _tb: TracebackType | None
+) -> None:
+    report_error("Python File Launcher error", format_error(value))
+
+
+def main() -> int:
+    app = QtWidgets.QApplication(sys.argv)
+    # Without this, exceptions raised inside Qt slots go to stderr, which is
     # None under pythonw -- i.e. buttons would silently do nothing.
-    root.report_callback_exception = lambda _exc_type, value, _tb: report_error(
-        "Python File Launcher error", format_error(value)
-    )
-    PythonLauncherGUI(root)
-    root.mainloop()
+    sys.excepthook = report_uncaught
+    apply_dark_theme(app)
+    window = PythonLauncherGUI()
+    apply_dark_titlebar(window)
+    window.show()
+    return app.exec()
 
 
 if __name__ == "__main__":
     try:
-        main()
+        status = main()
     except Exception as exc:
         report_error("Python File Launcher failed to start", format_error(exc))
         sys.exit(1)
+    sys.exit(status)
