@@ -26,6 +26,7 @@ from pluginhost.bootstrap import (
     MARKER_NAME,
     BootstrapError,
     Hooks,
+    Window,
     ensure_dependencies,
 )
 from pluginhost.plugin_deps import read_pins
@@ -117,13 +118,13 @@ class World:
             hooks=self.hooks(lock),
         )
 
-    def progress(self, title: str, message: str, work: Callable[[], None]) -> None:
+    def progress(self, title: str, message: str, work: Callable[[Window], None]) -> None:
         self.windows.append((title, message))
-        work()
+        work(Window())
 
 
-def _no_window(_title: str, _message: str, work: Callable[[], None]) -> None:
-    work()
+def _no_window(_title: str, _message: str, work: Callable[[Window], None]) -> None:
+    work(Window())
 
 
 @pytest.fixture
@@ -658,6 +659,122 @@ def test_waiting_for_a_hung_install_gives_up_and_says_why(
     assert "start this app again" in message
 
 
+# ── waiting for another app is shown, and can be cancelled (#695) ────────────
+
+WAITING = "Another app is installing its components.\nsend_to_window is waiting for it to finish..."
+INSTALLING = "Installing send_to_window's components (first start only)..."
+
+
+class _Holder:
+    """Another app whose install is under way until ``release`` is called."""
+
+    def __init__(self, lock: Path, target: Path) -> None:
+        self.held = threading.Event()
+        self._release = threading.Event()
+        self.thread = threading.Thread(
+            target=_install_lock, args=(lock, target, self._install), daemon=True
+        )
+        self.world = World()
+
+    def _install(self, lock: Path, staging: Path) -> None:
+        self.held.set()
+        self._release.wait(timeout=30)
+        self.world.install(lock, staging)
+
+    def __enter__(self) -> _Holder:
+        self.thread.start()
+        assert self.held.wait(timeout=5)
+        return self
+
+    def release(self) -> None:
+        self._release.set()
+
+    def __exit__(self, *_exc: object) -> None:
+        self.release()
+        self.thread.join(timeout=5)
+
+
+def _start_while_waiting(
+    lock: Path,
+    target: Path,
+    on_shown: Callable[[str, bool], None],
+    shown: list[tuple[str, bool]],
+) -> None:
+    """First start of an app whose window reports to ``shown`` and then to ``on_shown``."""
+
+    def progress(_title: str, _message: str, work: Callable[[Window], None]) -> None:
+        def show(message: str, cancellable: bool) -> None:
+            shown.append((message, cancellable))
+            on_shown(message, cancellable)
+
+        work(window := Window(show))
+        assert not window.cancelled.is_set()
+
+    ensure_dependencies(
+        app_name="send_to_window",
+        app_dir=_default_app(lock),
+        lock=lock,
+        target=target,
+        hooks=World().hooks(lock, progress=progress),
+    )
+
+
+def test_waiting_for_another_apps_install_says_so_then_goes_back_to_installing(
+    lock: Path, target: Path
+) -> None:
+    shown: list[tuple[str, bool]] = []
+    with _Holder(lock, target) as holder:
+        _start_while_waiting(
+            lock,
+            target,
+            lambda message, _cancellable: holder.release() if message == WAITING else None,
+            shown,
+        )
+    assert shown == [(WAITING, True), (INSTALLING, False)]
+    assert bootstrap.is_current(lock, target)
+    assert len(holder.world.installs) == 1  # this app reused the other's install
+
+
+def test_cancelling_the_wait_exits_cleanly_and_leaves_the_install_alone(
+    lock: Path, target: Path
+) -> None:
+    world = World()
+    shown: list[tuple[str, bool]] = []
+
+    def progress(_title: str, _message: str, work: Callable[[Window], None]) -> None:
+        window = Window(lambda message, cancellable: shown.append((message, cancellable)))
+        # The user presses Cancel as soon as the window says it is waiting.
+        window.cancelled.set()
+        work(window)
+
+    with _Holder(lock, target) as holder:
+        with pytest.raises(SystemExit) as exited:
+            ensure_dependencies(
+                app_name="send_to_window",
+                app_dir=_default_app(lock),
+                lock=lock,
+                target=target,
+                hooks=world.hooks(lock, progress=progress),
+            )
+        still_held = not bootstrap.is_current(lock, target)
+    assert exited.value.code == 0
+    assert shown == [(WAITING, True)]  # never switched back to Installing
+    assert still_held
+    assert world.installs == []
+    assert world.site_dirs == []
+    # The mutex was not left behind: the other app finished, and a later start works.
+    assert bootstrap.is_current(lock, target)
+    assert len(holder.world.installs) == 1
+    assert not target.with_name(target.name + ".new").exists()
+
+
+def test_an_uncontended_first_start_never_mentions_waiting(lock: Path, target: Path) -> None:
+    shown: list[tuple[str, bool]] = []
+    _start_while_waiting(lock, target, lambda *_args: None, shown)
+    assert shown == []
+    assert bootstrap.is_current(lock, target)
+
+
 # ── the window itself, and who calls it (#663) ───────────────────────────────
 
 
@@ -683,9 +800,23 @@ class FakeTk:
 
 
 class FakeWidget:
-    def __init__(self, *_args: object, **_kwargs: object) -> None: ...
+    def __init__(self, *_args: object, **kwargs: object) -> None:
+        self.options = dict(kwargs)
+        self.packed = False
 
-    def pack(self, **_kwargs: object) -> None: ...
+    def press(self) -> None:
+        command = self.options["command"]
+        assert callable(command)
+        command()
+
+    def pack(self, **_kwargs: object) -> None:
+        self.packed = True
+
+    def pack_forget(self) -> None:
+        self.packed = False
+
+    def config(self, **kwargs: object) -> None:
+        self.options.update(kwargs)
 
     def start(self, *_args: object) -> None: ...
 
@@ -702,11 +833,46 @@ def test_with_progress_window_titles_the_window_as_given(monkeypatch: pytest.Mon
     monkeypatch.setattr(ttk, "Progressbar", FakeWidget)
     ran: list[bool] = []
     bootstrap.with_progress_window(
-        "Python File Launcher - first start", "Installing...", lambda: ran.append(True)
+        "Python File Launcher - first start", "Installing...", lambda _window: ran.append(True)
     )
     assert ran == [True]
     [root] = roots
     assert root.titles == ["Python File Launcher - first start"]
+
+
+def test_the_progress_window_offers_cancel_only_while_waiting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    widgets: dict[str, list[FakeWidget]] = {"label": [], "button": []}
+
+    def make(kind: str) -> Callable[..., FakeWidget]:
+        def build(*args: object, **kwargs: object) -> FakeWidget:
+            widgets[kind].append(FakeWidget(*args, **kwargs))
+            return widgets[kind][-1]
+
+        return build
+
+    monkeypatch.setattr(tkinter, "Tk", FakeTk)
+    monkeypatch.setattr(tkinter, "Label", make("label"))
+    monkeypatch.setattr(tkinter, "Button", make("button"))
+    monkeypatch.setattr(ttk, "Progressbar", FakeWidget)
+    seen: list[tuple[str, bool]] = []  # (label text, is Cancel packed) after each change
+
+    def work(window: Window) -> None:
+        [label] = widgets["label"]
+        assert widgets["button"] == [], "no Cancel button until the app waits"
+        window.show("waiting", cancellable=True)
+        [button] = widgets["button"]
+        seen.append((str(label.options["text"]), button.packed))
+        button.press()  # the user presses Cancel
+        seen.append((str(label.options["text"]), button.packed))
+        assert window.cancelled.is_set()
+        assert button.options["state"] == "disabled"
+        window.show("installing")
+        seen.append((str(label.options["text"]), button.packed))
+
+    bootstrap.with_progress_window("t", "Installing...", work)
+    assert seen == [("waiting", True), ("Cancelling...", True), ("installing", False)]
 
 
 def test_macros_starts_its_first_start_under_its_own_name(

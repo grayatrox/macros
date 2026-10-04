@@ -41,6 +41,7 @@ import site
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from ctypes import wintypes
@@ -55,7 +56,6 @@ MARKER_NAME = "requirements.lock.sha256"
 #: The version of a distribution (by normalised name) that would be imported, or None.
 VersionOf = Callable[[str], str | None]
 Installer = Callable[[Path, Path], None]
-Progress = Callable[[str, str, Callable[[], None]], None]  # (title, message, work)
 AddSiteDir = Callable[[str], None]
 
 # How long an app waits for another app's install before giving up. A cold
@@ -66,6 +66,47 @@ INSTALL_WAIT_SECONDS = 600.0
 
 class BootstrapError(Exception):
     """The dependencies could not be made importable; the message says why."""
+
+
+class InstallCancelledError(Exception):
+    """The user cancelled while waiting for another app's install."""
+
+
+class Window:
+    """What the work behind a progress window uses to talk to it.
+
+    Tests and headless callers use one with no display: ``show`` then does nothing.
+    """
+
+    def __init__(self, show: Callable[[str, bool], None] | None = None) -> None:
+        self._show = show
+        #: Set when the user presses Cancel; the work should stop soon after.
+        self.cancelled = threading.Event()
+
+    def show(self, message: str, *, cancellable: bool = False) -> None:
+        """Replace the window's message; ``cancellable`` adds a Cancel button."""
+        if self._show:
+            self._show(message, cancellable)
+
+
+Progress = Callable[[str, str, Callable[[Window], None]], None]  # (title, message, work)
+
+
+def _nothing() -> None:
+    pass
+
+
+@dataclass(frozen=True)
+class Wait:
+    """How long, and how visibly, to wait for another app's install."""
+
+    seconds: float
+    #: Called once, when the install is found to be held by someone else.
+    on_blocked: Callable[[], None] = _nothing
+    #: Called once the install has been acquired after being blocked.
+    on_acquired: Callable[[], None] = _nothing
+    #: When set, stops the wait with :class:`InstallCancelledError`.
+    cancelled: threading.Event | None = None
 
 
 def deps_dir() -> Path:
@@ -121,11 +162,13 @@ def pip_install(lock: Path, target: Path, build_lock: Path = BUILD_LOCK_FILE) ->
     )
 
 
-def with_progress_window(title: str, message: str, work: Callable[[], None]) -> None:
+def with_progress_window(title: str, message: str, work: Callable[[Window], None]) -> None:
     """Run ``work`` on a thread behind a small "please wait" window titled ``title``.
 
     A first install downloads several packages; with no window it would look
-    like the app failed to start. Whatever ``work`` raises is re-raised here.
+    like the app failed to start. ``work`` may change the message and offer a
+    Cancel button through the :class:`Window` it is given. Whatever ``work``
+    raises is re-raised here.
     """
     import tkinter as tk  # noqa: PLC0415 - GUI only when an install is actually needed
     from tkinter import ttk  # noqa: PLC0415 - ditto
@@ -134,16 +177,38 @@ def with_progress_window(title: str, message: str, work: Callable[[], None]) -> 
     root.title(title)
     root.resizable(False, False)
     root.attributes("-topmost", True)
-    tk.Label(root, text=message, font=("Segoe UI", 10), padx=24, pady=16).pack()
+    label = tk.Label(root, text=message, font=("Segoe UI", 10), padx=24, pady=16)
+    label.pack()
     bar = ttk.Progressbar(root, mode="indeterminate", length=300)
     bar.pack(padx=24, pady=(0, 20))
     bar.start(12)
+
+    def show(text: str, cancellable: bool) -> None:
+        root.after(0, lambda: apply(text, cancellable))
+
+    window = Window(show)
+    buttons: list[tk.Button] = []  # created on first use: most installs never wait
+
+    def cancel() -> None:
+        window.cancelled.set()
+        buttons[0].config(state="disabled")
+        label.config(text="Cancelling...")
+
+    def apply(text: str, cancellable: bool) -> None:
+        label.config(text=text)
+        if cancellable and not buttons:
+            buttons.append(tk.Button(root, text="Cancel", width=10, command=cancel))
+        if buttons:
+            if cancellable:
+                buttons[0].pack(pady=(0, 16))
+            else:
+                buttons[0].pack_forget()
 
     errors: list[BaseException] = []
 
     def worker() -> None:
         try:
-            work()
+            work(window)
         except BaseException as exc:  # re-raised on the calling thread below
             errors.append(exc)
         finally:
@@ -213,20 +278,24 @@ _kernel32.ReleaseMutex.argtypes = [wintypes.HANDLE]
 _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 WAIT_TIMEOUT = 0x00000102
 WAIT_FAILED = 0xFFFFFFFF
+WAIT_SLICE_SECONDS = 0.1  # how often a waiting app looks at its Cancel button
 
 
 @contextmanager
-def _exclusive(target: Path, wait: float) -> Iterator[None]:
+def _exclusive(target: Path, wait: Wait) -> Iterator[None]:
     """Hold the install mutex for ``target`` against every other process and thread.
 
     A kernel mutex rather than a lock file: Windows releases it when its holder
     dies (the next waiter gets WAIT_ABANDONED, and still owns it), and it leaves
     nothing beside the install. Named after the folder, so separate folders do
-    not wait for each other. Waits at most ``wait`` seconds: the mutex frees
+    not wait for each other. Waits at most ``wait.seconds``: the mutex frees
     only when its holder finishes or dies, and a hung pip install does neither.
+    Found held, it reports that through ``wait.on_blocked`` and then polls, so
+    ``wait.cancelled`` is noticed within a fraction of a second.
 
     Raises:
-        BootstrapError: another holder kept the mutex for longer than ``wait``.
+        BootstrapError: another holder kept the mutex for longer than ``wait.seconds``.
+        InstallCancelledError: ``wait.cancelled`` was set while waiting.
         OSError: the mutex could not be created or waited on.
     """
     key = hashlib.sha256(str(target.resolve()).lower().encode("utf-8")).hexdigest()
@@ -234,14 +303,29 @@ def _exclusive(target: Path, wait: float) -> Iterator[None]:
     if not handle:
         raise ctypes.WinError(ctypes.get_last_error())
     try:
-        result = _kernel32.WaitForSingleObject(handle, round(wait * 1000))
+        result = _kernel32.WaitForSingleObject(handle, 0)
+        if result == WAIT_TIMEOUT:
+            wait.on_blocked()
+            deadline = time.monotonic() + wait.seconds
+            while result == WAIT_TIMEOUT:
+                if wait.cancelled is not None and wait.cancelled.is_set():
+                    raise InstallCancelledError
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                result = _kernel32.WaitForSingleObject(
+                    handle, round(min(remaining, WAIT_SLICE_SECONDS) * 1000)
+                )
+            else:
+                wait.on_acquired()
         if result == WAIT_FAILED:
             raise ctypes.WinError(ctypes.get_last_error())
         if result == WAIT_TIMEOUT:
             raise BootstrapError(
                 "Another app is installing the required components into:\n\n"
-                f"{target}\n\nand has not finished after {wait / 60:g} minutes. Wait for it "
-                "to finish, then start this app again. If it seems stuck, close the other "
+                f"{target}\n\nand has not finished after {wait.seconds / 60:g} minutes. "
+                "Wait for it to finish, then start this app again. If it seems stuck, close "
+                "the other "
                 "app (or end its Python process in Task Manager) and start this app again."
             )
         try:
@@ -253,7 +337,7 @@ def _exclusive(target: Path, wait: float) -> Iterator[None]:
 
 
 def _install_if_stale(
-    lock: Path, target: Path, digest: str, install: Installer, wait: float
+    lock: Path, target: Path, digest: str, install: Installer, wait: Wait
 ) -> bool:
     """Install unless ``target`` already holds ``digest``, alone among installers.
 
@@ -262,7 +346,7 @@ def _install_if_stale(
     install was needed.
 
     Raises:
-        As :func:`_install_fresh`, plus BootstrapError and OSError from the mutex.
+        As :func:`_install_fresh`, plus the mutex's errors (see :func:`_exclusive`).
     """
     with _exclusive(target, wait):
         if _installed_digest(target) == digest:
@@ -328,7 +412,7 @@ def install_lock(
     if _installed_digest(target) == digest:
         return False
     try:
-        return _install_if_stale(lock, target, digest, install, wait)
+        return _install_if_stale(lock, target, digest, install, Wait(wait))
     except (subprocess.CalledProcessError, OSError) as exc:
         raise _install_failed(exc, "try again") from exc
 
@@ -399,6 +483,8 @@ def ensure_dependencies(
             app needs something the lock does not pin, the install failed,
             another app's install did not finish within
             ``hooks.install_wait``, or dependencies are still missing afterwards.
+        SystemExit: the user cancelled while this app waited for another app's
+            install; exits with status 0, as a deliberate choice rather than a failure.
     """
     hooks = hooks or Hooks()
     if not _unmet(app_name, app_dir, lock, hooks.version_of):
@@ -407,16 +493,25 @@ def ensure_dependencies(
     target = target or deps_dir()
     digest = _lock_digest(lock)
     if _installed_digest(target) != digest:
+        installing = f"Installing {app_name}'s components (first start only)..."
 
-        def work() -> None:
-            _install_if_stale(lock, target, digest, hooks.install, hooks.install_wait)
+        def work(window: Window) -> None:
+            wait = Wait(
+                hooks.install_wait,
+                on_blocked=lambda: window.show(
+                    f"Another app is installing its components.\n{app_name} is waiting for it "
+                    "to finish...",
+                    cancellable=True,
+                ),
+                on_acquired=lambda: window.show(installing),
+                cancelled=window.cancelled,
+            )
+            _install_if_stale(lock, target, digest, hooks.install, wait)
 
         try:
-            hooks.progress(
-                f"{app_name} - first start",
-                f"Installing {app_name}'s components (first start only)...",
-                work,
-            )
+            hooks.progress(f"{app_name} - first start", installing, work)
+        except InstallCancelledError:
+            raise SystemExit(0) from None
         except (subprocess.CalledProcessError, OSError) as exc:
             raise _install_failed(exc, "start the app again") from exc
 
