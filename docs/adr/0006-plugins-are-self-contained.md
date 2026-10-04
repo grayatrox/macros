@@ -106,9 +106,12 @@ imports PySide6, so it also starts on a bare Python (#677).
   root `requirements.lock`. That is the host's contract, not an accident of
   layout. Making a plugin installable outside this repository is a separate
   change.
-- `pluginhost.bootstrap.REQUIRED_MODULES` still lists the modules Macros needs,
-  and the install folder is still `%LOCALAPPDATA%\Macros\deps-pyXY`. Neither
-  changed here. Renaming the folder would reinstall everything.
+- Each app passes the modules its first start checks to
+  `pluginhost.bootstrap.ensure_dependencies(required_modules=...)` (#689), so
+  the host no longer lists any plugin's imports. The lists are still kept by
+  hand, beside each app's entry point, in step with its pyproject.toml.
+- The install folder is still `%LOCALAPPDATA%\Macros\deps-pyXY`, unchanged
+  here. Renaming it would reinstall everything.
 - Existing checkouts must move their git-ignored `settings.json` and
   `geckodriver.exe` from the repository root into `plugins/macros/`. The app
   says which file it is missing.

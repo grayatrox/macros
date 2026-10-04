@@ -523,7 +523,7 @@ def test_a_script_that_exits_is_cleared_by_the_poll(
 def test_a_failed_first_start_install_is_shown_and_exits(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def fail(*, app_name: str) -> None:
+    def fail(*, app_name: str, required_modules: tuple[str, ...]) -> None:
         raise launcher.BootstrapError("no network")
 
     monkeypatch.setattr(launcher, "ensure_dependencies", fail)
@@ -538,10 +538,15 @@ def test_a_failed_first_start_install_is_shown_and_exits(
 def test_the_first_start_install_is_named_after_the_launcher(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    names: list[str] = []
-    monkeypatch.setattr(launcher, "ensure_dependencies", lambda *, app_name: names.append(app_name))
+    calls: list[tuple[str, tuple[str, ...]]] = []
+    monkeypatch.setattr(
+        launcher,
+        "ensure_dependencies",
+        lambda *, app_name, required_modules: calls.append((app_name, tuple(required_modules))),
+    )
     launcher.bootstrap()
-    assert names == ["Python File Launcher"]
+    # Only PySide6: the launcher must not install Macros' modules into a bare Python (#689).
+    assert calls == [("Python File Launcher", ("PySide6",))]
 
 
 # ── dependencies ─────────────────────────────────────────────────────────────

@@ -35,6 +35,7 @@ from pluginhost.bootstrap import BootstrapError, ensure_dependencies  # needs sr
 from pluginhost.plugin_deps import PluginDeps, PluginDepsError  # stdlib only, like bootstrap
 
 MB_ICONERROR = 0x10
+REQUIRED_MODULES = ("PySide6",)  # all the launcher itself imports
 
 
 def show_native_error(title: str, message: str) -> None:
@@ -49,7 +50,7 @@ def bootstrap() -> None:
         SystemExit: the install failed; the reason has been shown in a dialog.
     """
     try:
-        ensure_dependencies(app_name="Python File Launcher")
+        ensure_dependencies(app_name="Python File Launcher", required_modules=REQUIRED_MODULES)
     except BootstrapError as exc:
         show_native_error("Python File Launcher - cannot start", str(exc))
         raise SystemExit(1) from exc

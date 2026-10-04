@@ -21,10 +21,10 @@ from typing import TextIO
 import pytest
 
 from macros import __main__ as entry
+from macros.__main__ import REQUIRED_MODULES
 from pluginhost import bootstrap
 from pluginhost.bootstrap import (
     MARKER_NAME,
-    REQUIRED_MODULES,
     BootstrapError,
     Hooks,
     ensure_dependencies,
@@ -64,7 +64,13 @@ class World:
             add_site_dir=self.add_site_dir,
             find_spec=self.find_spec,
         )
-        ensure_dependencies(app_name=app_name, lock=lock, target=target, hooks=hooks)
+        ensure_dependencies(
+            app_name=app_name,
+            required_modules=REQUIRED_MODULES,
+            lock=lock,
+            target=target,
+            hooks=hooks,
+        )
 
     def progress(self, title: str, message: str, work: Callable[[], None]) -> None:
         self.windows.append((title, message))
@@ -97,6 +103,46 @@ def test_nothing_happens_when_dependencies_already_import(lock: Path, target: Pa
     assert world.installs == []
     assert world.site_dirs == []
     assert not target.exists()
+
+
+def test_only_the_modules_the_caller_names_are_checked(lock: Path, target: Path) -> None:
+    world = World()
+    world.importable.add("PySide6")
+    hooks = Hooks(
+        install=world.install,
+        progress=world.progress,
+        add_site_dir=world.add_site_dir,
+        find_spec=world.find_spec,
+    )
+    ensure_dependencies(
+        app_name="Python File Launcher",
+        required_modules=("PySide6",),
+        lock=lock,
+        target=target,
+        hooks=hooks,
+    )
+    assert world.installs == []  # Macros' other modules are none of the launcher's business
+
+
+def test_a_module_the_caller_names_triggers_the_install(lock: Path, target: Path) -> None:
+    world = World()
+    world.importable.add("PySide6")
+    world.install_provides = False
+    hooks = Hooks(
+        install=world.install,
+        progress=world.progress,
+        add_site_dir=world.add_site_dir,
+        find_spec=world.find_spec,
+    )
+    with pytest.raises(BootstrapError, match="  PIL"):
+        ensure_dependencies(
+            app_name="Recipe Calc",
+            required_modules=("PySide6", "PIL"),
+            lock=lock,
+            target=target,
+            hooks=hooks,
+        )
+    assert len(world.installs) == 1
 
 
 def test_first_start_installs_from_the_lock_and_adds_the_folder(lock: Path, target: Path) -> None:
@@ -284,7 +330,13 @@ def test_pip_failure_reaches_the_user_with_pips_reason(
         find_spec=world.find_spec,
     )
     with pytest.raises(BootstrapError, match="No matching distribution found for x"):
-        ensure_dependencies(app_name="send_to_window", lock=lock, target=target, hooks=hooks)
+        ensure_dependencies(
+            app_name="send_to_window",
+            required_modules=REQUIRED_MODULES,
+            lock=lock,
+            target=target,
+            hooks=hooks,
+        )
 
 
 def argv_value(argv: list[str], flag: str) -> str:
@@ -361,7 +413,13 @@ def _first_start(lock: Path, target: Path, install: bootstrap.Installer) -> None
         add_site_dir=world.add_site_dir,
         find_spec=world.find_spec,
     )
-    ensure_dependencies(app_name="send_to_window", lock=lock, target=target, hooks=hooks)
+    ensure_dependencies(
+        app_name="send_to_window",
+        required_modules=REQUIRED_MODULES,
+        lock=lock,
+        target=target,
+        hooks=hooks,
+    )
 
 
 @pytest.mark.parametrize("second", [_install_lock, _first_start], ids=["install_lock", "startup"])
@@ -447,12 +505,15 @@ def test_macros_starts_its_first_start_under_its_own_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     names: list[str] = []
+    modules: list[str] = []
 
-    def stop(*, app_name: str) -> None:
+    def stop(*, app_name: str, required_modules: tuple[str, ...]) -> None:
         names.append(app_name)
+        modules.extend(required_modules)
         raise BootstrapError("stop before the app runs")
 
     monkeypatch.setattr(entry, "ensure_dependencies", stop)
     monkeypatch.setattr(ctypes.windll.user32, "MessageBoxW", lambda *_args: 0)
     assert entry.main() == 1
     assert names == ["send_to_window"]
+    assert modules == list(REQUIRED_MODULES)

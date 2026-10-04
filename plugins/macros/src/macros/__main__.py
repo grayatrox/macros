@@ -11,12 +11,25 @@ import ctypes
 from pluginhost.bootstrap import BootstrapError, ensure_dependencies
 
 MB_ICONERROR = 0x10
+#: Import names the app needs; one per package is enough to detect it. Keep in
+#: step with this plugin's pyproject.toml.
+REQUIRED_MODULES = (
+    "keyboard",
+    "psutil",
+    "pyautogui",
+    "pystray",
+    "win32clipboard",
+    "win32gui",
+    "win32process",
+    "PIL",
+    "PySide6",  # the log window
+)
 
 
 def main() -> int:
     """Install any missing dependencies, then run the app. Returns the exit code."""
     try:
-        ensure_dependencies(app_name="send_to_window")
+        ensure_dependencies(app_name="send_to_window", required_modules=REQUIRED_MODULES)
     except BootstrapError as exc:
         # Under pythonw there is no console, so report it in a native dialog.
         ctypes.windll.user32.MessageBoxW(0, str(exc), "send_to_window - cannot start", MB_ICONERROR)

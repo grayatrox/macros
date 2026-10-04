@@ -46,11 +46,11 @@ def test_the_entry_point_imports_without_pyside6(entry_without_pyside6: ModuleTy
 def test_a_bare_python_gets_the_first_start_install_under_recipe_calcs_name(
     entry_without_pyside6: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    names: list[str] = []
+    calls: list[tuple[str, tuple[str, ...]]] = []
     shown: list[tuple[str, str]] = []
 
-    def stop(*, app_name: str) -> None:
-        names.append(app_name)
+    def stop(*, app_name: str, required_modules: tuple[str, ...]) -> None:
+        calls.append((app_name, tuple(required_modules)))
         raise BootstrapError("no network")
 
     def message_box(_hwnd: int, text: str, title: str, _flags: int) -> int:
@@ -61,6 +61,7 @@ def test_a_bare_python_gets_the_first_start_install_under_recipe_calcs_name(
     monkeypatch.setattr(ctypes.windll.user32, "MessageBoxW", message_box)
 
     assert entry_without_pyside6.main() == 1
-    assert names == ["Recipe Calc"]
+    # Its own modules, not Macros' (#689).
+    assert calls == [("Recipe Calc", ("PySide6", "PIL"))]
     assert shown == [("Recipe Calc - cannot start", "no network")]
     assert "PySide6" not in sys.modules

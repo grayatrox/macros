@@ -13,12 +13,15 @@ from pluginhost.bootstrap import BootstrapError, ensure_dependencies
 
 APP_NAME = "Recipe Calc"
 MB_ICONERROR = 0x10
+#: Import names the app needs; one per package is enough to detect it. Keep in
+#: step with this plugin's pyproject.toml.
+REQUIRED_MODULES = ("PySide6", "PIL")
 
 
 def main() -> int:
     """Install any missing dependencies, then run the app. Returns the exit code."""
     try:
-        ensure_dependencies(app_name=APP_NAME)
+        ensure_dependencies(app_name=APP_NAME, required_modules=REQUIRED_MODULES)
     except BootstrapError as exc:
         # Under pythonw there is no console, so report it in a native dialog.
         ctypes.windll.user32.MessageBoxW(0, str(exc), f"{APP_NAME} - cannot start", MB_ICONERROR)

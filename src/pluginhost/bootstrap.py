@@ -39,25 +39,12 @@ import site
 import subprocess
 import sys
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from ctypes import wintypes
 from dataclasses import dataclass
 from importlib.machinery import ModuleSpec
 from pathlib import Path
-
-#: Import names the app (and launcher.pyw) needs; one per package is enough to detect it.
-REQUIRED_MODULES = (
-    "keyboard",
-    "psutil",
-    "pyautogui",
-    "pystray",
-    "win32clipboard",
-    "win32gui",
-    "win32process",
-    "PIL",
-    "PySide6",  # the log window and launcher.pyw's GUI
-)
 
 ROOT = Path(__file__).resolve().parents[2]
 LOCK_FILE = ROOT / "requirements.lock"
@@ -82,9 +69,11 @@ def deps_dir() -> Path:
     return base / "Macros" / f"deps-py{sys.version_info.major}{sys.version_info.minor}"
 
 
-def missing_modules(find_spec: FindSpec = importlib.util.find_spec) -> list[str]:
-    """Which of :data:`REQUIRED_MODULES` cannot be imported right now."""
-    return [name for name in REQUIRED_MODULES if find_spec(name) is None]
+def missing_modules(
+    required_modules: Sequence[str], find_spec: FindSpec = importlib.util.find_spec
+) -> list[str]:
+    """Which of ``required_modules`` cannot be imported right now."""
+    return [name for name in required_modules if find_spec(name) is None]
 
 
 def _pip(args: list[str], env: dict[str, str] | None = None) -> None:
@@ -338,6 +327,7 @@ class Hooks:
 def ensure_dependencies(
     *,
     app_name: str,
+    required_modules: Sequence[str],
     lock: Path = LOCK_FILE,
     target: Path | None = None,
     hooks: Hooks | None = None,
@@ -347,14 +337,16 @@ def ensure_dependencies(
     Does nothing when they are already importable (e.g. a developer's venv).
     ``app_name`` is the display name of the app that is starting; the progress
     window is titled after it. Required, because several apps share this
-    install and a default would name the wrong one.
+    install and a default would name the wrong one. ``required_modules`` are
+    the import names the app needs, one per package is enough to detect it;
+    required for the same reason: the host cannot know what each app imports.
 
     Raises:
         BootstrapError: the lock is missing, the install failed, or modules
             are still missing afterwards.
     """
     hooks = hooks or Hooks()
-    if not missing_modules(hooks.find_spec):
+    if not missing_modules(required_modules, hooks.find_spec):
         return
 
     target = target or deps_dir()
@@ -375,7 +367,7 @@ def ensure_dependencies(
 
     hooks.add_site_dir(str(target))
     importlib.invalidate_caches()
-    if still_missing := missing_modules(hooks.find_spec):
+    if still_missing := missing_modules(required_modules, hooks.find_spec):
         raise BootstrapError(
             "These components are still missing after installation:\n\n  "
             + "\n  ".join(still_missing)
