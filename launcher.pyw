@@ -16,7 +16,6 @@ launcher holds the Popen handle for everything it starts, so a PID is only ever
 considered "alive" if that specific child is still running -- no PID reuse races.
 """
 
-import contextlib
 import ctypes
 import json
 import logging
@@ -33,7 +32,11 @@ from typing import Any, NamedTuple, override
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from pluginhost.bootstrap import BootstrapError, ensure_dependencies  # needs src on sys.path
+from pluginhost.bootstrap import (
+    BootstrapError,
+    deps_dir,
+    ensure_dependencies,
+)  # needs src on sys.path
 from pluginhost.plugin_deps import PluginDeps, PluginDepsError  # stdlib only, like bootstrap
 
 MB_ICONERROR = 0x10
@@ -75,6 +78,10 @@ SETTINGS_FILE = Path.home() / ".python_launcher_settings.json"
 LOG_FILE = Path.home() / ".python_launcher.log"
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 log = logging.getLogger("launcher")
+# Last-resort crash log; own file, so it does not also feed the main log's handler
+CRASH_LOG_NAME = "launcher-error.log"
+crash_log = logging.getLogger("launcher.crash")
+crash_log.propagate = False
 
 # This file, so the launcher never lists itself as something to launch
 SELF_PATH = Path(__file__).resolve()
@@ -969,6 +976,36 @@ def format_error(exc: BaseException) -> str:
     return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
 
 
+def crash_log_path() -> Path:
+    """The last-resort crash log, in the per-user folder the dependencies install into."""
+    return deps_dir().parent / CRASH_LOG_NAME
+
+
+def write_crash_log(details: str) -> None:
+    """Log `details` at ERROR level to the crash log, through its own file handler.
+
+    Independent of configure_logging so that it works when startup fails before
+    that has run. If the file cannot be opened the details go to stderr instead
+    (there is none under pythonw, so then they are lost, but not silently where
+    there is a console).
+    """
+    path = crash_log_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(path, encoding="utf-8")
+    except OSError as exc:
+        if sys.stderr is not None:
+            print(f"Could not write crash log {path}: {exc}\n{details}", file=sys.stderr)
+        return
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    crash_log.addHandler(handler)
+    try:
+        crash_log.error("%s", details)
+    finally:
+        crash_log.removeHandler(handler)
+        handler.close()
+
+
 def report_error(title: str, details: str) -> None:
     """Show a dialog -- under pythonw there is no console to print a traceback to."""
     try:
@@ -978,8 +1015,7 @@ def report_error(title: str, details: str) -> None:
         show_error(None, title, details)
     except Exception:
         # Qt itself is unusable; leave something behind that can be read later.
-        with contextlib.suppress(OSError):
-            SELF_PATH.with_name("launcher-error.log").write_text(details, encoding="utf-8")
+        write_crash_log(details)
 
 
 def report_uncaught(

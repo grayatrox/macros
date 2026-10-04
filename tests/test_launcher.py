@@ -814,3 +814,44 @@ def test_a_failed_dark_titlebar_call_is_logged_at_debug(
     with caplog.at_level("DEBUG", logger="launcher"):
         launcher.apply_dark_titlebar(cast(QtWidgets.QWidget, _Window()))
     assert any("title bar" in r.getMessage() and r.levelname == "DEBUG" for r in caplog.records)
+
+
+# ── last-resort crash log ────────────────────────────────────────────────────
+
+
+def test_crash_is_logged_under_local_app_data(
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    launcher.write_crash_log("Traceback: boom")
+    log_file = tmp_path / "Macros" / "launcher-error.log"
+    assert launcher.crash_log_path() == log_file
+    text = log_file.read_text(encoding="utf-8")
+    assert "ERROR launcher.crash: Traceback: boom" in text
+    assert not (ROOT / "launcher-error.log").exists()
+
+
+def test_crash_log_appends_instead_of_overwriting(
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    launcher.write_crash_log("first")
+    launcher.write_crash_log("second")
+    text = launcher.crash_log_path().read_text(encoding="utf-8")
+    assert "first" in text
+    assert "second" in text
+
+
+def test_unwritable_crash_folder_falls_back_to_stderr(
+    launcher: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    blocker = tmp_path / "Macros"
+    blocker.write_text("a file where the folder should be", encoding="utf-8")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    launcher.write_crash_log("Traceback: boom")
+    err = capsys.readouterr().err
+    assert "Could not write crash log" in err
+    assert "Traceback: boom" in err

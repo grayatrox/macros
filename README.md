@@ -58,6 +58,8 @@ small progress window. Your Python installation is not modified.
   is installing waits for that install and reuses it.
 - **Failures.** If the install fails, a dialog shows pip's reason and any
   earlier install is kept.
+- **Launcher crashes.** If the launcher itself cannot start or show an error
+  dialog, the traceback is logged to `%LOCALAPPDATA%\Macros\launcher-error.log`.
 
 To work on the code, make a virtualenv with the dev tools. From the repository
 root:
