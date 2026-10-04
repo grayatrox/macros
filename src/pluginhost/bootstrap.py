@@ -73,6 +73,7 @@ def deps_dir() -> Path:
     """Private folder the dependencies are installed into for this Python."""
     local = os.environ.get("LOCALAPPDATA")
     base = Path(local) if local else Path.home() / "AppData" / "Local"
+    # Named for Macros, which had the first install; renaming it would reinstall everything.
     return base / "Macros" / f"deps-py{sys.version_info.major}{sys.version_info.minor}"
 
 

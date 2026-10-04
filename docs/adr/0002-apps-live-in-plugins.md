@@ -1,7 +1,8 @@
 # 2. Apps live in `plugins/<app>/`, and the launcher looks one level down
 
-Date: 2026-10-04. Status: accepted. Work package: #661. Supersedes the
-recursive-search part of [ADR 0001](0001-launcher-app-manifests.md).
+Date: 2026-10-04. Status: accepted; keeping the Macros code in `src/macros/` is
+superseded by [ADR 0006](0006-plugins-are-self-contained.md). Work package: #661.
+Supersedes the recursive-search part of [ADR 0001](0001-launcher-app-manifests.md).
 
 ## Context
 

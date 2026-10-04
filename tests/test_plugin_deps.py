@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from macros.bootstrap import MARKER_NAME
-from macros.plugin_deps import (
+from pluginhost.bootstrap import MARKER_NAME
+from pluginhost.plugin_deps import (
     DepsStatus,
     PluginDeps,
     PluginDepsError,

@@ -9,7 +9,7 @@ stderr; otherwise startup and callback errors are reported in a dialog.
 
 PySide6 is a third-party package. Run as a script, the launcher first makes it
 importable through the same first-start install as Macros.py (hash-pinned, into
-a private folder; see src/macros/bootstrap.py), so a bare Python still works.
+a private folder; see src/pluginhost/bootstrap.py), so a bare Python still works.
 
 Single-instance mode (on by default) keeps one running process per script. The
 launcher holds the Popen handle for everything it starts, so a PID is only ever
@@ -31,8 +31,8 @@ from typing import Any, NamedTuple, override
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from macros.bootstrap import BootstrapError, ensure_dependencies  # needs src on sys.path
-from macros.plugin_deps import PluginDeps, PluginDepsError  # stdlib only, like bootstrap
+from pluginhost.bootstrap import BootstrapError, ensure_dependencies  # needs src on sys.path
+from pluginhost.plugin_deps import PluginDeps, PluginDepsError  # stdlib only, like bootstrap
 
 MB_ICONERROR = 0x10
 
@@ -390,7 +390,7 @@ class PythonLauncherGUI(QtWidgets.QWidget):
         # path -> tree row, so status cells can be updated in place
         self.items_by_path: dict[str, QtWidgets.QTreeWidgetItem] = {}
 
-        # Listed apps' declared dependencies; see src/macros/plugin_deps.py.
+        # Listed apps' declared dependencies; see src/pluginhost/plugin_deps.py.
         self.deps = deps or PluginDeps()
         # Whether launched apps get the private install folder on PYTHONPATH
         self.deps_active = self.deps.active_at_start()

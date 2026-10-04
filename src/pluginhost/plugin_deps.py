@@ -12,7 +12,7 @@ runs off the GUI thread. The full reasoning is in
   visible on the path the launched app will get. Version ranges are not
   evaluated; the lock is what gets installed, so the lock is what is checked.
 * **Installed from the lock only.** A missing requirement is installed by
-  making the first-start install folder (:func:`macros.bootstrap.deps_dir`)
+  making the first-start install folder (:func:`pluginhost.bootstrap.deps_dir`)
   current with the whole hash-pinned runtime lock, which covers every
   plugin's requirements. A requirement the lock does not pin is reported in
   :attr:`DepsStatus.unpinned` and never installed.
@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NamedTuple
 
-from macros.bootstrap import (
+from pluginhost.bootstrap import (
     LOCK_FILE,
     BootstrapError,
     Installer,

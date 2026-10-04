@@ -55,7 +55,7 @@ def test_another_process_cannot_acquire_while_held(name: str, held: int) -> None
     result = subprocess.run(
         [sys.executable, "-c", probe, name],
         cwd=ROOT,
-        env={**os.environ, "PYTHONPATH": str(ROOT / "src")},
+        env={**os.environ, "PYTHONPATH": str(ROOT / "plugins" / "macros" / "src")},
         capture_output=True,
         text=True,
         check=True,
@@ -89,10 +89,10 @@ class ExitedError(Exception):
 
 
 # However the app was started - via the plugins/macros/Macros.py shim, or
-# `python -m macros`, whose argv[0] is src/macros/__main__.py and cannot be run
-# as a plain script - the new copy is started through the shim (OP #643).
+# `python -m macros`, whose argv[0] is plugins/macros/src/macros/__main__.py and cannot be
+# run as a plain script - the new copy is started through the shim (OP #643).
 SHIM = str(ROOT / "plugins" / "macros" / "Macros.py")
-MAIN = str(ROOT / "src" / "macros" / "__main__.py")
+MAIN = str(ROOT / "plugins" / "macros" / "src" / "macros" / "__main__.py")
 
 
 @pytest.mark.parametrize(

@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 from PySide6 import QtCore, QtGui, QtTest, QtWidgets
 
-from macros.plugin_deps import PluginDeps, read_pins
+from pluginhost.plugin_deps import PluginDeps, read_pins
 
 
 def _touch(path: Path) -> Path:

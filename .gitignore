@@ -2,6 +2,10 @@
 __pycache__/
 *.py[cod]
 
+# Package build output (plugins are buildable packages; ADR 0006)
+build/
+*.egg-info/
+
 # Third-party binary; download separately (Selenium Firefox driver)
 geckodriver.exe
 

@@ -1,7 +1,8 @@
 # 3. Each plugin declares its dependencies in its own `pyproject.toml`
 
 Date: 2026-10-04. Status: accepted; the root mirroring is superseded by
-[ADR 0005](0005-root-declares-only-the-launcher.md). Work package: #667. Builds on
+[ADR 0005](0005-root-declares-only-the-launcher.md), and "not an installable
+package" by [ADR 0006](0006-plugins-are-self-contained.md). Work package: #667. Builds on
 [ADR 0002](0002-apps-live-in-plugins.md).
 
 ## Context

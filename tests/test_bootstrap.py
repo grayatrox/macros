@@ -19,8 +19,8 @@ from tkinter import ttk
 import pytest
 
 from macros import __main__ as entry
-from macros import bootstrap
-from macros.bootstrap import (
+from pluginhost import bootstrap
+from pluginhost.bootstrap import (
     MARKER_NAME,
     REQUIRED_MODULES,
     BootstrapError,

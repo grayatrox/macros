@@ -2,7 +2,7 @@
 
 Small Windows tools for gaming, mostly Minecraft:
 
-- **`plugins/macros/Macros.py`** (code in `src/macros/`): a system-tray app (it calls itself
+- **`plugins/macros/Macros.py`** (code in `plugins/macros/src/macros/`): a system-tray app (it calls itself
   *send_to_window*) that
   listens for global hotkeys and runs per-game macros. It only acts when the
   matching game is focused, checking both the window title and the owning
@@ -19,7 +19,7 @@ Small Windows tools for gaming, mostly Minecraft:
   command through the clipboard and then put your clipboard contents back.
   Your real keypresses are held back while a macro types.
 
-- **`src/macros/mcvote.py` + `strayamc_vote_autofill.user.js`**: `open_vote_pages()`
+- **`plugins/macros/src/macros/mcvote.py` + `plugins/macros/strayamc_vote_autofill.user.js`**: `open_vote_pages()`
   (used by F20) opens the vote sites in your normal Firefox. The Tampermonkey
   userscript fills in your username, so you only solve the captcha and click
   vote. `python -m macros.mcvote` runs the older fully automatic Selenium
@@ -30,16 +30,19 @@ Small Windows tools for gaming, mostly Minecraft:
   components on first start (see Install). An app is a folder in `plugins/`
   with a `launcher-app.toml` (see Configure).
 
-Every launchable app lives in its own folder under `plugins/`. Shared code,
-tooling and tests stay at the repository root. `plugins/recipe_calc/` is a
+Every launchable app lives in its own folder under `plugins/`, code, data and
+`pyproject.toml` included. The repository root keeps the launcher, the code it
+shares with its apps (`src/pluginhost/`: the first-start install and the
+dependency check), tooling and tests (`docs/adr/0006-plugins-are-self-contained.md`). `plugins/recipe_calc/` is a
 separate project with its own tracker and is not described here, though the
 `lint`, `typecheck` and `test` verbs below check it too.
 
 ## Install
 
 Windows and Python 3.12 or newer. To just use the app, copy
-`settings.example.json` to `settings.json`, fill in your values (see
-[Configure](#configure)), and run it (see [Run](#run)). On first start it (or
+`plugins/macros/settings.example.json` to `plugins/macros/settings.json`, fill
+in your values (see [Configure](#configure)), and run it (see [Run](#run)). On
+first start it (or
 `launcher.pyw`) installs its own components into
 `%LOCALAPPDATA%\Macros\deps-py312` (one folder per Python version), showing a
 small progress window. Your Python installation is not modified.
@@ -67,19 +70,19 @@ Then create your settings file from the template and fill in your own values
 (see [Configure](#configure)). The app will not start without it:
 
 ```powershell
-Copy-Item settings.example.json settings.json
+Copy-Item plugins/macros/settings.example.json plugins/macros/settings.json
 ```
 
 For the vote helper, install [Tampermonkey](https://www.tampermonkey.net/) in
-Firefox and add `strayamc_vote_autofill.user.js` to it.
+Firefox and add `plugins/macros/strayamc_vote_autofill.user.js` to it.
 
 The legacy Selenium flow also needs
 [geckodriver](https://github.com/mozilla/geckodriver/releases): put
-`geckodriver.exe` in the repository root. It is git-ignored. Run the flow on
+`geckodriver.exe` in `plugins/macros/`. It is git-ignored. Run the flow on
 one or more findmcserver.com vote pages, with the username from `settings.json`:
 
 ```powershell
-$env:PYTHONPATH = "src"; .venv\Scripts\python -m macros.mcvote https://findmcserver.com/server/<name>?vote=true
+$env:PYTHONPATH = "plugins/macros/src"; .venv\Scripts\python -m macros.mcvote https://findmcserver.com/server/<name>?vote=true
 ```
 
 ## Run
@@ -112,8 +115,8 @@ of them.
 
 ## Configure
 
-Personal values live in `settings.json` at the repository root. It is
-git-ignored, so nothing identifying is committed; `settings.example.json` is the
+Personal values live in `plugins/macros/settings.json`. It is git-ignored, so
+nothing identifying is committed; `plugins/macros/settings.example.json` is the
 template. The app reads it once at startup and refuses to start, with a message
 saying what is wrong, if it is missing or invalid.
 
@@ -129,11 +132,11 @@ Tampermonkey menu with **Set Minecraft username**.
 
 Everything else is in the source:
 
-- **Hotkeys and games.** Each game is a `Profile` subclass in `src/macros/app.py`
+- **Hotkeys and games.** Each game is a `Profile` subclass in `plugins/macros/src/macros/app.py`
   with a `WINDOW_KEYWORD` (window title), `PROCESS_NAMES` (executables allowed
   to own that window) and a `hotkeys` mapping. A key written with a leading
   `*`, like `"*f23"`, fires whatever modifiers are held.
-- **Server-specific commands.** `MinecraftProfile.STRAYA` in `src/macros/app.py`.
+- **Server-specific commands.** `MinecraftProfile.STRAYA` in `plugins/macros/src/macros/app.py`.
   The current server is read from the Minecraft client's `--quickPlayMultiplayer`
   launch argument, so it only reflects the server the client was launched into.
 - **Userscript sites.** Add a site to the userscript's `SELECTORS` and `@match`
@@ -154,7 +157,8 @@ Everything else is in the source:
   other apps are still listed. The reasoning is in
   `docs/adr/0001-launcher-app-manifests.md` and
   `docs/adr/0002-apps-live-in-plugins.md`. To add an app, give it a folder in
-  `plugins/` with a manifest and a `pyproject.toml` declaring its dependencies.
+  `plugins/` holding its code, a manifest, and a `pyproject.toml` declaring its
+  dependencies (`docs/adr/0006-plugins-are-self-contained.md`).
 
   After each scan the launcher checks every listed app's `[project].dependencies`
   against the versions pinned in `requirements.lock`. If any are missing, it

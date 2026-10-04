@@ -11,7 +11,7 @@ A persistent background app that:
   • Streams events to a toggleable dark-themed GUI log window
 
 Dependencies are pinned and hash-checked in requirements.lock, and installed
-automatically on first start (macros.bootstrap).
+automatically on first start (pluginhost.bootstrap).
 """
 
 import ctypes
@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, Self, TypedDict, override
 
-# Third-party: installed on first start by macros.bootstrap, which runs before
+# Third-party: installed on first start by pluginhost.bootstrap, which runs before
 # this module is imported (see macros.__main__).
 import keyboard
 import psutil
@@ -501,8 +501,9 @@ def release_single_instance(handle: int) -> None:
 
 
 # The plugins/macros/Macros.py shim. Restarts go through it because argv[0] may
-# be src/macros/__main__.py (`python -m macros`), which cannot run as a script.
-ENTRY_SCRIPT = Path(__file__).resolve().parents[2] / "plugins" / "macros" / "Macros.py"
+# be plugins/macros/src/macros/__main__.py (`python -m macros`), which cannot run
+# as a script. plugins/macros/src/macros/ -> plugins/macros/.
+ENTRY_SCRIPT = Path(__file__).resolve().parents[2] / "Macros.py"
 
 
 def restart_process() -> None:

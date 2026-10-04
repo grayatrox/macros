@@ -1,14 +1,14 @@
 """``python -m macros`` (and the plugins/macros/Macros.py shim): start the hotkey app.
 
 Dependencies are installed first if this is the first start; see
-:mod:`macros.bootstrap`.
+:mod:`pluginhost.bootstrap`, which the launcher provides.
 """
 
 from __future__ import annotations
 
 import ctypes
 
-from macros.bootstrap import BootstrapError, ensure_dependencies
+from pluginhost.bootstrap import BootstrapError, ensure_dependencies
 
 MB_ICONERROR = 0x10
 

@@ -1,6 +1,6 @@
 """Personal settings: the Minecraft username and the vote pages per server.
 
-They live in ``settings.json`` at the repository root, which is git-ignored so
+They live in ``settings.json`` in the plugin's folder (``plugins/macros/``), which is git-ignored so
 that nothing identifying is committed; ``settings.example.json`` is the
 committed template. They are read and validated once, at startup, and a bad or
 missing file stops the app with a message saying what to fix.
@@ -14,9 +14,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[2]
-SETTINGS_PATH = ROOT / "settings.json"
-EXAMPLE_PATH = ROOT / "settings.example.json"
+# plugins/macros/src/macros/ -> plugins/macros/
+PLUGIN_DIR = Path(__file__).resolve().parents[2]
+SETTINGS_PATH = PLUGIN_DIR / "settings.json"
+EXAMPLE_PATH = PLUGIN_DIR / "settings.example.json"
 
 
 class SettingsError(Exception):
