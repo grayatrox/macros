@@ -265,14 +265,25 @@ def _parse_inputs(
     grid: list[Ref | None] = [None] * 9
     if method == "crafting_shaped":
         key = recipe_json.get("key", {})
-        for r, row in enumerate(recipe_json.get("pattern", [])[:3]):
+        pattern = recipe_json.get("pattern", [])
+        # Mod and data-pack jars carry shapes vanilla's do not; skip, never raise.
+        if (
+            not isinstance(key, dict)
+            or not isinstance(pattern, list)
+            or not all(isinstance(row, str) for row in pattern)
+        ):
+            return None
+        for r, row in enumerate(pattern[:3]):
             for c, symbol in enumerate(row[:3]):
                 if symbol != " " and symbol in key:
                     ref = ingredient_ref(key[symbol])
                     refs.append(ref)
                     grid[r * 3 + c] = ref
     elif method == "crafting_shapeless":
-        refs = [ingredient_ref(e) for e in recipe_json.get("ingredients", [])]
+        ingredients = recipe_json.get("ingredients", [])
+        if not isinstance(ingredients, list):
+            return None
+        refs = [ingredient_ref(e) for e in ingredients]
         for i, present in enumerate([r for r in refs if r][:9]):
             grid[i] = present
     elif method in SINGLE_INPUT:

@@ -424,6 +424,30 @@ def test_bad_files_are_skipped() -> None:
     assert load_recipe_book(jar).recipes["stick"].ingredients == {"oak_planks": 1}
 
 
+@pytest.mark.parametrize(
+    "bad_recipe",
+    [
+        {"type": "crafting_shaped", "pattern": [1], "key": {"#": "b"}, "result": {"id": "a"}},
+        {"type": "crafting_shaped", "pattern": None, "key": {"#": "b"}, "result": {"id": "a"}},
+        {"type": "crafting_shaped", "pattern": ["#"], "key": None, "result": {"id": "a"}},
+        {"type": "crafting_shaped", "pattern": "###", "key": {"#": "b"}, "result": {"id": "a"}},
+        {"type": "crafting_shapeless", "ingredients": 5, "result": {"id": "a"}},
+        {"type": "crafting_shapeless", "ingredients": None, "result": {"id": "a"}},
+    ],
+)
+def test_malformed_recipe_shapes_are_skipped_not_fatal(bad_recipe: object) -> None:
+    jar = FakeJar(
+        {
+            RECIPES + "bad.json": bad_recipe,
+            RECIPES + "stick.json": shapeless("stick", ["oak_planks"]),
+        }
+    )
+    book = load_recipe_book(jar)
+
+    assert book.recipes["stick"].ingredients == {"oak_planks": 1}
+    assert "a" not in book.recipes
+
+
 def test_unresolvable_tag_ingredients_drop_the_recipe() -> None:
     jar = FakeJar({RECIPES + "x.json": shapeless("x", ["#minecraft:nothing"])})
     assert "x" not in load_recipe_book(jar).recipes
