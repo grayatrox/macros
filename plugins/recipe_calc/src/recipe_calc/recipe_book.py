@@ -92,6 +92,8 @@ WIKI_SMALL_WORDS = {"of", "the", "a", "an", "and", "with", "on"}
 
 COOKING = ("smelting", "blasting", "smoking", "campfire_cooking")
 SINGLE_INPUT = (*COOKING, "stonecutting")
+# Cooking stations that lose recipe-selection ties to the plain furnace
+SPECIALISED_COOKING = ("blasting", "smoking", "campfire_cooking")
 
 # Recipe method -> the workstation shown in the placement panel
 STATIONS = {
@@ -458,7 +460,7 @@ def _candidate_recipes(archive: Archive) -> dict[str, list[Recipe]]:
     """Every usable recipe per item, best first."""
     names = archive.namelist()
     tags = _read_tags(archive, names)  # first, so tag ingredients can be resolved
-    candidates: dict[str, list[tuple[int, int, ParsedRecipe]]] = {}
+    candidates: dict[str, list[tuple[int, bool, int, ParsedRecipe]]] = {}
     for name in names:
         if not (name.startswith(RECIPE_DIRS) and name.endswith(".json")):
             continue
@@ -466,14 +468,17 @@ def _candidate_recipes(archive: Archive) -> dict[str, list[Recipe]]:
         if parsed is None:
             continue
         recipe_name = PurePosixPath(name).stem
-        # Shorter names break priority ties (raw_gold beats deepslate_gold_ore)
-        rank = (recipe_priority(recipe_name, parsed), len(recipe_name), parsed)
+        # Ties go to the plain furnace over the specialised stations (iron_ingot
+        # smelts, not blasts), then to the shorter name (raw_gold beats
+        # deepslate_gold_ore). Never to jar order.
+        specialised = parsed.method in SPECIALISED_COOKING
+        rank = (recipe_priority(recipe_name, parsed), specialised, len(recipe_name), parsed)
         candidates.setdefault(parsed.result, []).append(rank)
 
     options: dict[str, list[Recipe]] = {}
     for item, ranked in candidates.items():
-        ranked.sort(key=lambda c: (c[0], c[1]))
-        resolved = [r for _, _, parsed in ranked if (r := _resolve(parsed, tags))]
+        ranked.sort(key=lambda c: (c[0], c[1], c[2]))
+        resolved = [r for _, _, _, parsed in ranked if (r := _resolve(parsed, tags))]
         if resolved:
             options[item] = resolved
     return options

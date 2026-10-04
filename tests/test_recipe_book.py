@@ -331,6 +331,25 @@ def test_shorter_recipe_names_break_ties() -> None:
     assert load_recipe_book(jar).recipes["gold_ingot"].ingredients == {"raw_gold": 1}
 
 
+def test_furnace_beats_blast_furnace_whatever_the_jar_order() -> None:
+    blasting = {
+        "type": "minecraft:blasting",
+        "ingredient": "iron_ore",
+        "result": {"id": "iron_ingot"},
+    }
+    for order in ((blasting, "iron_ore"), ("iron_ore", blasting)):
+        files: dict[str, object] = {}
+        for entry in order:
+            if entry == "iron_ore":
+                files[RECIPES + "iron_ingot_from_smelting_iron_ore.json"] = smelting(
+                    "iron_ingot", "iron_ore"
+                )
+            else:
+                files[RECIPES + "iron_ingot_from_blasting_iron_ore.json"] = blasting
+        best = load_recipe_book(FakeJar(files)).recipes["iron_ingot"]
+        assert best.method == "smelting"
+
+
 def test_pack_unpack_cycle_switches_to_an_alternative() -> None:
     jar = FakeJar(
         {
