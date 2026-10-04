@@ -33,9 +33,12 @@ Small Windows tools for gaming, mostly Minecraft:
 Every launchable app lives in its own folder under `plugins/`, code, data and
 `pyproject.toml` included. The repository root keeps the launcher, the code it
 shares with its apps (`src/pluginhost/`: the first-start install and the
-dependency check), tooling and tests (`docs/adr/0006-plugins-are-self-contained.md`). `plugins/recipe_calc/` is a
-separate project with its own tracker and is not described here, though the
-`lint`, `typecheck` and `test` verbs below check it too.
+dependency check), tooling and tests (`docs/adr/0006-plugins-are-self-contained.md`).
+`plugins/recipe_calc/` is the Recipe Calc app: a `recipe_calc` package in
+`plugins/recipe_calc/src/`, a thin `Recipe_Calc.py` entry point beside it, and its
+own `pyproject.toml`. It is a separate project with its own tracker and is not
+described further here, though the `lint`, `typecheck` and `test` verbs below
+check it too.
 
 ## Install
 

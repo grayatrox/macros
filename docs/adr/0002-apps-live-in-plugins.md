@@ -4,6 +4,10 @@ Date: 2026-10-04. Status: accepted; keeping the Macros code in `src/macros/` is
 superseded by [ADR 0006](0006-plugins-are-self-contained.md). Work package: #661.
 Supersedes the recursive-search part of [ADR 0001](0001-launcher-app-manifests.md).
 
+> Note, 2026-10-04 (#674): the entry point named below as `Recpe_Calc.py` is now
+> `Recipe_Calc.py`, a thin shim over the `recipe_calc` package in
+> `plugins/recipe_calc/src/` (see [ADR 0006](0006-plugins-are-self-contained.md)).
+
 ## Context
 
 ADR 0001 made apps opt in with a `launcher-app.toml`, but the launcher still

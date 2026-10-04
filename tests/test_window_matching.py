@@ -55,7 +55,7 @@ def foreground(monkeypatch: pytest.MonkeyPatch) -> Foreground:
         ("Vote for StrayaMC - Minecraft Server List — Mozilla Firefox", "firefox.exe"),
         ("Minecraft Wiki - Google Chrome", "chrome.exe"),
         ("C:\\Games\\Minecraft", "explorer.exe"),
-        ("Recpe_Calc.py - Minecraft Recipe Calculator", "python.exe"),
+        ("Recipe_Calc.py - Minecraft Recipe Calculator", "python.exe"),
     ],
 )
 def test_minecraft_profile_ignores_other_apps_with_minecraft_in_title(

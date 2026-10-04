@@ -6,6 +6,11 @@ Date: 2026-10-04. Status: accepted; where to search superseded by
 > Since ADR 0002 the launcher no longer searches recursively. It reads only
 > `<folder>/*/launcher-app.toml`, and the apps live in `plugins/<app>/`. The
 > manifest format and its rules below still apply.
+>
+> Note, 2026-10-04 (#674): the examples below use the names from when this was
+> written, `Recipe Calc/Recpe_Calc.py`. That app now lives in `plugins/recipe_calc/`
+> and its entry point is `Recipe_Calc.py` (see ADR 0002 and
+> [ADR 0006](0006-plugins-are-self-contained.md)).
 
 ## Context
 
