@@ -19,7 +19,9 @@ installs them the first time the app starts, into a private folder:
 
 A marker file holds the lock's SHA-256, so editing the lock reinstalls on the
 next start. A new install is staged beside the old one and swapped in only
-once it succeeds, so a failed download never breaks a working setup.
+once it succeeds, so a failed download never breaks a working setup. Every app
+shares the folder, so an install holds a named mutex: an app starting while
+another installs waits for it, then reuses its install.
 
 Imports only the standard library at module level - it runs before any
 dependency exists.
@@ -27,6 +29,7 @@ dependency exists.
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import importlib
 import importlib.util
@@ -36,7 +39,9 @@ import site
 import subprocess
 import sys
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from ctypes import wintypes
 from dataclasses import dataclass
 from importlib.machinery import ModuleSpec
 from pathlib import Path
@@ -210,6 +215,62 @@ def _install_fresh(lock: Path, target: Path, digest: str, install: Installer) ->
     shutil.rmtree(retired, ignore_errors=True)  # a locked leftover is retried next install
 
 
+_kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+_kernel32.CreateMutexW.restype = wintypes.HANDLE
+_kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+_kernel32.WaitForSingleObject.restype = wintypes.DWORD
+_kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+_kernel32.ReleaseMutex.argtypes = [wintypes.HANDLE]
+_kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+INFINITE = 0xFFFFFFFF
+WAIT_FAILED = 0xFFFFFFFF
+
+
+@contextmanager
+def _exclusive(target: Path) -> Iterator[None]:
+    """Hold the install mutex for ``target`` against every other process and thread.
+
+    A kernel mutex rather than a lock file: Windows releases it when its holder
+    dies (the next waiter gets WAIT_ABANDONED, and still owns it), and it leaves
+    nothing beside the install. Named after the folder, so separate folders do
+    not wait for each other. Waits indefinitely: the holder is a pip install,
+    which ends one way or the other.
+
+    Raises:
+        OSError: the mutex could not be created or waited on.
+    """
+    key = hashlib.sha256(str(target.resolve()).lower().encode("utf-8")).hexdigest()
+    handle = _kernel32.CreateMutexW(None, False, f"Local\\Macros-deps-{key}")
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        if _kernel32.WaitForSingleObject(handle, INFINITE) == WAIT_FAILED:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            yield
+        finally:
+            _kernel32.ReleaseMutex(handle)
+    finally:
+        _kernel32.CloseHandle(handle)
+
+
+def _install_if_stale(lock: Path, target: Path, digest: str, install: Installer) -> bool:
+    """Install unless ``target`` already holds ``digest``, alone among installers.
+
+    The digest is checked again once the mutex is held: another app may have
+    finished this very install while this one waited. Returns whether an
+    install was needed.
+
+    Raises:
+        As :func:`_install_fresh`, plus OSError from the mutex.
+    """
+    with _exclusive(target):
+        if _installed_digest(target) == digest:
+            return False
+        _install_fresh(lock, target, digest, install)
+        return True
+
+
 def _lock_digest(lock: Path) -> str:
     """SHA-256 of the lock file, as stored in the install's marker.
 
@@ -259,10 +320,9 @@ def install_lock(lock: Path, target: Path, install: Installer = pip_install) -> 
     if _installed_digest(target) == digest:
         return False
     try:
-        _install_fresh(lock, target, digest, install)
+        return _install_if_stale(lock, target, digest, install)
     except (subprocess.CalledProcessError, OSError) as exc:
         raise _install_failed(exc, "try again") from exc
-    return True
 
 
 @dataclass(frozen=True)
@@ -300,11 +360,15 @@ def ensure_dependencies(
     target = target or deps_dir()
     digest = _lock_digest(lock)
     if _installed_digest(target) != digest:
+
+        def work() -> None:
+            _install_if_stale(lock, target, digest, hooks.install)
+
         try:
             hooks.progress(
                 f"{app_name} - first start",
                 f"Installing {app_name}'s components (first start only)...",
-                lambda: _install_fresh(lock, target, digest, hooks.install),
+                work,
             )
         except (subprocess.CalledProcessError, OSError) as exc:
             raise _install_failed(exc, "start the app again") from exc

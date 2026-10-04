@@ -10,6 +10,7 @@ import ctypes
 import hashlib
 import subprocess
 import sys
+import threading
 import tkinter
 from collections.abc import Callable
 from importlib.machinery import ModuleSpec
@@ -317,6 +318,78 @@ def test_install_lock_failure_keeps_the_previous_install(lock: Path, target: Pat
 def test_install_lock_reports_a_missing_lock(tmp_path: Path, target: Path) -> None:
     with pytest.raises(BootstrapError, match="lock file"):
         bootstrap.install_lock(tmp_path / "absent.lock", target, World().install)
+
+
+# ── concurrent installs into the one shared folder (#687) ────────────────────
+# The launcher and Macros both install on first start; started together, each
+# would wipe the other's staging folder and run pip into it.
+
+
+class OverlapProbe:
+    """An installer that holds its install open to see whether another starts meanwhile."""
+
+    def __init__(self) -> None:
+        self.world = World()
+        self.entered = threading.Event()  # the first install has begun
+        self.overlapped = threading.Event()  # a second began before the first finished
+        self._active = 0
+        self._count = threading.Lock()
+
+    def install(self, lock: Path, staging: Path) -> None:
+        with self._count:
+            self._active += 1
+            if self._active > 1:
+                self.overlapped.set()
+        self.entered.set()
+        try:
+            self.overlapped.wait(timeout=1.0)  # time for a racing second install to start
+            self.world.install(lock, staging)
+        finally:
+            with self._count:
+                self._active -= 1
+
+
+def _install_lock(lock: Path, target: Path, install: bootstrap.Installer) -> None:
+    bootstrap.install_lock(lock, target, install)
+
+
+def _first_start(lock: Path, target: Path, install: bootstrap.Installer) -> None:
+    world = World()  # its own interpreter: nothing imports until the folder is added
+    hooks = Hooks(
+        install=install,
+        progress=_no_window,
+        add_site_dir=world.add_site_dir,
+        find_spec=world.find_spec,
+    )
+    ensure_dependencies(app_name="send_to_window", lock=lock, target=target, hooks=hooks)
+
+
+@pytest.mark.parametrize("second", [_install_lock, _first_start], ids=["install_lock", "startup"])
+def test_concurrent_installs_into_one_folder_install_once(
+    lock: Path, target: Path, second: Callable[[Path, Path, bootstrap.Installer], None]
+) -> None:
+    probe = OverlapProbe()
+    errors: list[BaseException] = []
+
+    def run(installer: Callable[[Path, Path, bootstrap.Installer], None]) -> None:
+        try:
+            installer(lock, target, probe.install)
+        except BaseException as exc:  # reported by the assertion below
+            errors.append(exc)
+
+    first = threading.Thread(target=run, args=(_install_lock,))
+    first.start()
+    assert probe.entered.wait(timeout=5)
+    racer = threading.Thread(target=run, args=(second,))
+    racer.start()
+    first.join(timeout=10)
+    racer.join(timeout=10)
+
+    assert errors == []
+    assert not probe.overlapped.is_set()
+    assert len(probe.world.installs) == 1  # the second reused the first's install
+    assert (target / "keyboard.py").is_file()
+    assert bootstrap.is_current(lock, target)
 
 
 # ── the window itself, and who calls it (#663) ───────────────────────────────

@@ -54,6 +54,8 @@ small progress window. Your Python installation is not modified.
   A few packages (pyautogui and friends) only ship source code, so they are
   built against the setuptools pinned in `requirements-build.lock`.
 - **Updated.** Editing the lock reinstalls on the next start.
+- **Shared.** Every app uses the one folder. An app that starts while another
+  is installing waits for that install and reuses it.
 - **Failures.** If the install fails, a dialog shows pip's reason and any
   earlier install is kept.
 
