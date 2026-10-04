@@ -450,6 +450,77 @@ def test_concurrent_installs_into_one_folder_install_once(
     assert bootstrap.is_current(lock, target)
 
 
+# ── a hung install must not freeze every other app (#693) ────────────────────
+# The mutex frees only when its holder finishes or dies; a pip install that
+# hangs would otherwise keep every app that starts after it waiting forever.
+
+
+def _install_lock_waiting(lock: Path, target: Path, wait: float) -> None:
+    bootstrap.install_lock(lock, target, World().install, wait=wait)
+
+
+def _first_start_waiting(lock: Path, target: Path, wait: float) -> None:
+    world = World()
+    ensure_dependencies(
+        app_name="send_to_window",
+        required_modules=REQUIRED_MODULES,
+        lock=lock,
+        target=target,
+        hooks=Hooks(
+            install=world.install,
+            progress=_no_window,
+            add_site_dir=world.add_site_dir,
+            find_spec=world.find_spec,
+            install_wait=wait,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "waiter", [_install_lock_waiting, _first_start_waiting], ids=["install_lock", "startup"]
+)
+def test_waiting_for_a_hung_install_gives_up_and_says_why(
+    lock: Path, target: Path, waiter: Callable[[Path, Path, float], None]
+) -> None:
+    held = threading.Event()
+    release = threading.Event()
+
+    def hung_pip(lock: Path, staging: Path) -> None:  # a pip install that never returns
+        held.set()
+        release.wait(timeout=30)
+        World().install(lock, staging)
+
+    holder = threading.Thread(target=_install_lock, args=(lock, target, hung_pip), daemon=True)
+    holder.start()
+    assert held.wait(timeout=5)
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            waiter(lock, target, 0.2)
+        except BaseException as exc:  # inspected below
+            errors.append(exc)
+
+    second = threading.Thread(target=run, daemon=True)
+    try:
+        second.start()
+        second.join(timeout=5)
+        gave_up = not second.is_alive()
+        installed_meanwhile = bootstrap.is_current(lock, target)
+    finally:
+        release.set()
+        holder.join(timeout=5)
+        second.join(timeout=5)
+
+    assert gave_up, "the second app is still waiting on the hung install"
+    assert not installed_meanwhile
+    assert len(errors) == 1
+    assert isinstance(errors[0], BootstrapError)
+    message = str(errors[0])
+    assert "Another app is installing" in message
+    assert "start this app again" in message
+
+
 # ── the window itself, and who calls it (#663) ───────────────────────────────
 
 

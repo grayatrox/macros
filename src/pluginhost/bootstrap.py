@@ -21,7 +21,8 @@ A marker file holds the lock's SHA-256, so editing the lock reinstalls on the
 next start. A new install is staged beside the old one and swapped in only
 once it succeeds, so a failed download never breaks a working setup. Every app
 shares the folder, so an install holds a named mutex: an app starting while
-another installs waits for it, then reuses its install.
+another installs waits for it, then reuses its install. The wait is bounded, so
+an install that hangs makes the others report it rather than freeze with it.
 
 Imports only the standard library at module level - it runs before any
 dependency exists.
@@ -55,6 +56,11 @@ FindSpec = Callable[[str], ModuleSpec | None]
 Installer = Callable[[Path, Path], None]
 Progress = Callable[[str, str, Callable[[], None]], None]  # (title, message, work)
 AddSiteDir = Callable[[str], None]
+
+# How long an app waits for another app's install before giving up. A cold
+# install builds several packages from source; ten minutes is far beyond that
+# on a working connection, and short enough that a hung one gets reported.
+INSTALL_WAIT_SECONDS = 600.0
 
 
 class BootstrapError(Exception):
@@ -211,21 +217,22 @@ _kernel32.WaitForSingleObject.restype = wintypes.DWORD
 _kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
 _kernel32.ReleaseMutex.argtypes = [wintypes.HANDLE]
 _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-INFINITE = 0xFFFFFFFF
+WAIT_TIMEOUT = 0x00000102
 WAIT_FAILED = 0xFFFFFFFF
 
 
 @contextmanager
-def _exclusive(target: Path) -> Iterator[None]:
+def _exclusive(target: Path, wait: float) -> Iterator[None]:
     """Hold the install mutex for ``target`` against every other process and thread.
 
     A kernel mutex rather than a lock file: Windows releases it when its holder
     dies (the next waiter gets WAIT_ABANDONED, and still owns it), and it leaves
     nothing beside the install. Named after the folder, so separate folders do
-    not wait for each other. Waits indefinitely: the holder is a pip install,
-    which ends one way or the other.
+    not wait for each other. Waits at most ``wait`` seconds: the mutex frees
+    only when its holder finishes or dies, and a hung pip install does neither.
 
     Raises:
+        BootstrapError: another holder kept the mutex for longer than ``wait``.
         OSError: the mutex could not be created or waited on.
     """
     key = hashlib.sha256(str(target.resolve()).lower().encode("utf-8")).hexdigest()
@@ -233,8 +240,16 @@ def _exclusive(target: Path) -> Iterator[None]:
     if not handle:
         raise ctypes.WinError(ctypes.get_last_error())
     try:
-        if _kernel32.WaitForSingleObject(handle, INFINITE) == WAIT_FAILED:
+        result = _kernel32.WaitForSingleObject(handle, round(wait * 1000))
+        if result == WAIT_FAILED:
             raise ctypes.WinError(ctypes.get_last_error())
+        if result == WAIT_TIMEOUT:
+            raise BootstrapError(
+                "Another app is installing the required components into:\n\n"
+                f"{target}\n\nand has not finished after {wait / 60:g} minutes. Wait for it "
+                "to finish, then start this app again. If it seems stuck, close the other "
+                "app (or end its Python process in Task Manager) and start this app again."
+            )
         try:
             yield
         finally:
@@ -243,7 +258,9 @@ def _exclusive(target: Path) -> Iterator[None]:
         _kernel32.CloseHandle(handle)
 
 
-def _install_if_stale(lock: Path, target: Path, digest: str, install: Installer) -> bool:
+def _install_if_stale(
+    lock: Path, target: Path, digest: str, install: Installer, wait: float
+) -> bool:
     """Install unless ``target`` already holds ``digest``, alone among installers.
 
     The digest is checked again once the mutex is held: another app may have
@@ -251,9 +268,9 @@ def _install_if_stale(lock: Path, target: Path, digest: str, install: Installer)
     install was needed.
 
     Raises:
-        As :func:`_install_fresh`, plus OSError from the mutex.
+        As :func:`_install_fresh`, plus BootstrapError and OSError from the mutex.
     """
-    with _exclusive(target):
+    with _exclusive(target, wait):
         if _installed_digest(target) == digest:
             return False
         _install_fresh(lock, target, digest, install)
@@ -294,22 +311,30 @@ def is_current(lock: Path, target: Path) -> bool:
     return _installed_digest(target) == _lock_digest(lock)
 
 
-def install_lock(lock: Path, target: Path, install: Installer = pip_install) -> bool:
+def install_lock(
+    lock: Path,
+    target: Path,
+    install: Installer = pip_install,
+    *,
+    wait: float = INSTALL_WAIT_SECONDS,
+) -> bool:
     """Make ``target`` hold ``lock``'s packages, installing only if it does not yet.
 
     The same staged, hash-checked install as the first start, without its
     window: for callers with their own UI that run it off their GUI thread.
+    Waits at most ``wait`` seconds for another app's install into ``target``.
     Returns whether an install was needed.
 
     Raises:
-        BootstrapError: the lock cannot be read or the install failed; an
-            earlier install in ``target`` is then left as it was.
+        BootstrapError: the lock cannot be read, the install failed, or
+            another app's install did not finish within ``wait``; an earlier
+            install in ``target`` is then left as it was.
     """
     digest = _lock_digest(lock)
     if _installed_digest(target) == digest:
         return False
     try:
-        return _install_if_stale(lock, target, digest, install)
+        return _install_if_stale(lock, target, digest, install, wait)
     except (subprocess.CalledProcessError, OSError) as exc:
         raise _install_failed(exc, "try again") from exc
 
@@ -322,6 +347,8 @@ class Hooks:
     progress: Progress = with_progress_window
     add_site_dir: AddSiteDir = site.addsitedir
     find_spec: FindSpec = importlib.util.find_spec
+    # Seconds to wait for another app's install into the same folder.
+    install_wait: float = INSTALL_WAIT_SECONDS
 
 
 def ensure_dependencies(
@@ -342,8 +369,9 @@ def ensure_dependencies(
     required for the same reason: the host cannot know what each app imports.
 
     Raises:
-        BootstrapError: the lock is missing, the install failed, or modules
-            are still missing afterwards.
+        BootstrapError: the lock is missing, the install failed, another
+            app's install did not finish within ``hooks.install_wait``, or
+            modules are still missing afterwards.
     """
     hooks = hooks or Hooks()
     if not missing_modules(required_modules, hooks.find_spec):
@@ -354,7 +382,7 @@ def ensure_dependencies(
     if _installed_digest(target) != digest:
 
         def work() -> None:
-            _install_if_stale(lock, target, digest, hooks.install)
+            _install_if_stale(lock, target, digest, hooks.install, hooks.install_wait)
 
         try:
             hooks.progress(
