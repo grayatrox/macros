@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Per-application global hotkey macros in a system-tray app, plus helper scripts."
 requires-python = ">=3.12"
 
-# Runtime dependencies of Macros.py and launcher.pyw. Pinned with hashes in
+# Runtime dependencies of launcher.pyw plus, verbatim, every plugin's own
+# (plugins/*/pyproject.toml; tests/test_plugin_projects.py keeps them in step,
+# see docs/adr/0003-per-plugin-pyproject.md). Pinned with hashes in
 # requirements.lock (regenerate with `python tools/lock.py`); these ranges only
 # bound the resolver.
 dependencies = [

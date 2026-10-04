@@ -1,0 +1,14 @@
+# What Recipe Calc needs at runtime. A dependency declaration for the launcher,
+# not an installable package. Every requirement here must appear verbatim in the
+# root pyproject.toml, which the hashed locks are compiled from
+# (tests/test_plugin_projects.py). See docs/adr/0003-per-plugin-pyproject.md.
+[project]
+name = "recipe-calc"
+version = "0.1.0"
+description = "Minecraft recipe calculator."
+requires-python = ">=3.12"
+dependencies = [
+    # Renders item and block icons. The app falls back to flat textures
+    # without it, but the rendered icons are the normal experience.
+    "pillow>=11,<12",
+]

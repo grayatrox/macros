@@ -1,0 +1,24 @@
+# What the Macros app needs at runtime. A dependency declaration for the
+# launcher, not an installable package: the code lives in src/macros and is
+# packaged by the root pyproject.toml. Every requirement here must appear
+# verbatim in the root, which the hashed locks are compiled from
+# (tests/test_plugin_projects.py). See docs/adr/0003-per-plugin-pyproject.md.
+[project]
+name = "macros"
+version = "0.1.0"
+description = "Per-application global hotkey macros in a system-tray app."
+requires-python = ">=3.12"
+dependencies = [
+    "pystray>=0.19,<0.20",
+    "keyboard>=0.13,<0.14",
+    "pyautogui>=0.9.54,<0.10",
+    "pywin32>=311",
+    "psutil>=7,<8",
+    "pillow>=11,<12",
+]
+
+[project.optional-dependencies]
+# Only mcvote.vote(), the legacy full-auto Selenium flow, needs this.
+legacy-vote = [
+    "selenium>=4.32,<5",
+]

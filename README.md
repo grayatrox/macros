@@ -101,8 +101,12 @@ of the apps from `launcher.pyw`: double-click it, or run
 
 The other verbs are `fmt`, `lint` (ruff check plus format check) and
 `typecheck` (strict mypy). CI (`.github/workflows/ci.yml`) runs `setup`, `lint`,
-`typecheck` and `test` on Windows. After changing dependencies in
-`pyproject.toml`, regenerate the locks with `python tools/lock.py`.
+`typecheck` and `test` on Windows. Each app declares its own runtime
+dependencies in `plugins/<app>/pyproject.toml`; the root `pyproject.toml` repeats
+them verbatim alongside the launcher's, and the locks are compiled from the root
+(`docs/adr/0003-per-plugin-pyproject.md`; a test fails if the two disagree).
+After changing dependencies, update both and regenerate the locks with
+`python tools/lock.py`.
 
 ## Configure
 
@@ -148,4 +152,4 @@ Everything else is in the source:
   other apps are still listed. The reasoning is in
   `docs/adr/0001-launcher-app-manifests.md` and
   `docs/adr/0002-apps-live-in-plugins.md`. To add an app, give it a folder in
-  `plugins/` with a manifest.
+  `plugins/` with a manifest and a `pyproject.toml` declaring its dependencies.
