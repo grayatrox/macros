@@ -803,6 +803,11 @@ class FakeTk:
 
     def __init__(self) -> None:
         self.titles: list[str] = []
+        self.protocols: dict[str, Callable[[], None]] = {}
+        self.destroyed = 0
+
+    def protocol(self, name: str, callback: Callable[[], None]) -> None:
+        self.protocols[name] = callback
 
     def title(self, text: str) -> None:
         self.titles.append(text)
@@ -814,7 +819,8 @@ class FakeTk:
     def after(self, _ms: int, callback: Callable[[], None]) -> None:
         callback()
 
-    def destroy(self) -> None: ...
+    def destroy(self) -> None:
+        self.destroyed += 1
 
     def mainloop(self) -> None: ...
 
@@ -893,6 +899,78 @@ def test_the_progress_window_offers_cancel_only_while_waiting(
 
     bootstrap.with_progress_window("t", "Installing...", work)
     assert seen == [("waiting", True), ("Cancelling...", True), ("installing", False)]
+
+
+def _run_window(
+    monkeypatch: pytest.MonkeyPatch, work: Callable[[Window, FakeTk, list[FakeWidget]], None]
+) -> list[FakeWidget]:
+    """Run ``work`` behind a window built from fakes; return the Labels it made."""
+    labels: list[FakeWidget] = []
+    roots: list[FakeTk] = []
+
+    def make_root() -> FakeTk:
+        roots.append(FakeTk())
+        return roots[-1]
+
+    def make_label(*args: object, **kwargs: object) -> FakeWidget:
+        labels.append(FakeWidget(*args, **kwargs))
+        return labels[-1]
+
+    monkeypatch.setattr(tkinter, "Tk", make_root)
+    monkeypatch.setattr(tkinter, "Label", make_label)
+    monkeypatch.setattr(tkinter, "Button", FakeWidget)
+    monkeypatch.setattr(ttk, "Progressbar", FakeWidget)
+    bootstrap.with_progress_window("t", "Installing...", lambda w: work(w, roots[0], labels))
+    return labels
+
+
+def test_closing_the_window_mid_install_is_refused_and_says_why(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def work(window: Window, root: FakeTk, labels: list[FakeWidget]) -> None:
+        close = root.protocols["WM_DELETE_WINDOW"]  # KeyError: X is not handled at all
+        destroyed_before = root.destroyed
+        close()  # the user clicks X while pip is running
+        seen["destroyed"] = root.destroyed - destroyed_before
+        seen["cancelled"] = window.cancelled.is_set()
+        seen["text"] = str(labels[0].options["text"])
+
+    _run_window(monkeypatch, work)
+    assert seen["destroyed"] == 0  # the window stays up: the install cannot stop part-way
+    assert seen["cancelled"] is False
+    assert "Installing..." in str(seen["text"])
+    assert "cannot be closed" in str(seen["text"])
+
+
+def test_closing_the_window_while_waiting_is_the_same_as_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def work(window: Window, root: FakeTk, labels: list[FakeWidget]) -> None:
+        window.show("waiting", cancellable=True)
+        root.protocols["WM_DELETE_WINDOW"]()
+        seen["cancelled"] = window.cancelled.is_set()
+        seen["text"] = str(labels[0].options["text"])
+
+    _run_window(monkeypatch, work)
+    assert seen == {"cancelled": True, "text": "Cancelling..."}
+
+
+def test_closing_the_window_after_a_refused_close_does_not_stack_notes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[str] = []
+
+    def work(_window: Window, root: FakeTk, labels: list[FakeWidget]) -> None:
+        for _ in range(2):
+            root.protocols["WM_DELETE_WINDOW"]()
+        seen.append(str(labels[0].options["text"]))
+
+    _run_window(monkeypatch, work)
+    assert seen[0].count("cannot be closed") == 1
 
 
 def test_macros_starts_its_first_start_under_its_own_name(

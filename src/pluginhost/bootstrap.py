@@ -189,13 +189,31 @@ def with_progress_window(title: str, message: str, work: Callable[[Window], None
 
     window = Window(show)
     buttons: list[tk.Button] = []  # created on first use: most installs never wait
+    shown = {"text": message, "cancellable": False}  # what the window says right now
 
     def cancel() -> None:
         window.cancelled.set()
         buttons[0].config(state="disabled")
         label.config(text="Cancelling...")
 
+    def close() -> None:
+        """The title-bar X. Waiting for another app: same as Cancel. Installing: refused.
+
+        pip runs as a subprocess that cannot be stopped part-way, so closing the
+        window would leave the install running with nothing on screen and the app
+        starting only once it finished. The window therefore stays and says so;
+        it closes itself when the install ends.
+        """
+        if shown["cancellable"]:
+            cancel()
+        else:
+            note = "This window cannot be closed until it finishes."
+            label.config(text=f"{shown['text']}\n\n{note}")
+
+    root.protocol("WM_DELETE_WINDOW", close)
+
     def apply(text: str, cancellable: bool) -> None:
+        shown["text"], shown["cancellable"] = text, cancellable
         label.config(text=text)
         if cancellable and not buttons:
             buttons.append(tk.Button(root, text="Cancel", width=10, command=cancel))
@@ -206,21 +224,31 @@ def with_progress_window(title: str, message: str, work: Callable[[Window], None
                 buttons[0].pack_forget()
 
     errors: list[BaseException] = []
-
-    def worker() -> None:
-        try:
-            work(window)
-        except BaseException as exc:  # re-raised on the calling thread below
-            errors.append(exc)
-        finally:
-            root.after(0, root.destroy)
-
-    thread = threading.Thread(target=worker, daemon=True)
+    thread = threading.Thread(
+        target=_run_work,
+        args=(work, window, errors, lambda: root.after(0, root.destroy)),
+        daemon=True,
+    )
     thread.start()
     root.mainloop()
     thread.join()
     if errors:
         raise errors[0]
+
+
+def _run_work(
+    work: Callable[[Window], None],
+    window: Window,
+    errors: list[BaseException],
+    done: Callable[[], object],
+) -> None:
+    """Thread body for :func:`with_progress_window`: run ``work``, collect what it raises."""
+    try:
+        work(window)
+    except BaseException as exc:  # re-raised on the calling thread by the caller
+        errors.append(exc)
+    finally:
+        done()
 
 
 def _tail(output: str | None, lines: int = 8) -> str:
