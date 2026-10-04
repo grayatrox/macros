@@ -56,7 +56,10 @@ def test_unknown_verb_is_a_key_error() -> None:
         tasks.commands("deploy", [], {})
 
 
-def test_main_runs_each_command_in_order() -> None:
+def test_main_runs_each_command_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    # main() reads the real environment; on the Actions runner GITHUB_ACTIONS
+    # would otherwise add --output-format=github and break the comparison.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     recorder = Recorder()
     assert tasks.main(["lint"], execute=recorder) == 0
     assert recorder.ran == list(tasks.commands("lint", [], {}))
