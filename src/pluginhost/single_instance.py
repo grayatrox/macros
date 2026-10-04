@@ -4,21 +4,16 @@ A kernel mutex rather than a PID file: it still works after an app has replaced
 its own process (Macros' Reload), and Windows releases it when the holder dies,
 so a crash never leaves a stale lock behind.
 
-Standard library only, like the rest of pluginhost.
+Standard library only, like the rest of pluginhost. The Win32 calls are
+:mod:`pluginhost.named_mutex`'s.
 """
 
 from __future__ import annotations
 
-import ctypes
 import time
-from ctypes import wintypes
 
-_kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-_kernel32.CreateMutexW.restype = wintypes.HANDLE
-_kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
-_kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+from pluginhost import named_mutex
 
-ERROR_ALREADY_EXISTS = 183
 POLL_SECONDS = 0.1
 
 
@@ -43,12 +38,10 @@ def acquire_single_instance(name: str, wait_seconds: float = 0) -> int | None:
     """
     deadline = time.monotonic() + wait_seconds
     while True:
-        handle = _kernel32.CreateMutexW(None, False, name)
-        if not handle:
-            raise ctypes.WinError(ctypes.get_last_error())
-        if ctypes.get_last_error() != ERROR_ALREADY_EXISTS:
-            return int(handle)
-        _kernel32.CloseHandle(handle)
+        handle, existed = named_mutex.create(name)
+        if not existed:
+            return handle
+        named_mutex.close(handle)
         if time.monotonic() >= deadline:
             return None
         time.sleep(POLL_SECONDS)
@@ -59,4 +52,4 @@ def release_single_instance(handle: int) -> None:
 
     Only needed to release the name before the process exits.
     """
-    _kernel32.CloseHandle(handle)
+    named_mutex.close(handle)

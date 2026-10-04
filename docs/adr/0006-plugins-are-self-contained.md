@@ -86,6 +86,15 @@ exception and hands it to the app to show, used by Macros and Recipe Calc).
 Both stay standard-library only, like the rest of the package; how an error is
 shown (a Qt dialog, a log window) remains each app's own code.
 
+2026-10-05, #703: the kernel32 mutex bindings that `single_instance.py` and
+`bootstrap.py` each declared now live once in `named_mutex.py`. Only the
+bindings are shared, not the policies: the single-instance check asks
+whether a name already exists and never owns it, while the install lock
+waits to own its mutex with a deadline and Cancel. One "acquire" API for both
+was rejected because it would couple a two-line existence check to the
+install's timeout, callbacks and error messages, which have nothing to do
+with it.
+
 ## Options rejected
 
 - **Keep the code in `src/macros/` (ADR 0002).** This is what was reported as

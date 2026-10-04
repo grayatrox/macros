@@ -44,9 +44,10 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
+
+from pluginhost import named_mutex
 
 ROOT = Path(__file__).resolve().parents[2]
 LOCK_FILE = ROOT / "requirements.lock"
@@ -269,15 +270,8 @@ def _install_fresh(lock: Path, target: Path, digest: str, install: Installer) ->
     shutil.rmtree(retired, ignore_errors=True)  # a locked leftover is retried next install
 
 
-_kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-_kernel32.CreateMutexW.restype = wintypes.HANDLE
-_kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
-_kernel32.WaitForSingleObject.restype = wintypes.DWORD
-_kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-_kernel32.ReleaseMutex.argtypes = [wintypes.HANDLE]
-_kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-WAIT_TIMEOUT = 0x00000102
-WAIT_FAILED = 0xFFFFFFFF
+WAIT_TIMEOUT = named_mutex.WAIT_TIMEOUT
+WAIT_FAILED = named_mutex.WAIT_FAILED
 WAIT_SLICE_SECONDS = 0.1  # how often a waiting app looks at its Cancel button
 
 
@@ -321,11 +315,9 @@ def _exclusive(target: Path, wait: Wait) -> Iterator[None]:
         OSError: the mutex could not be created or waited on.
     """
     key = hashlib.sha256(str(target.resolve()).lower().encode("utf-8")).hexdigest()
-    handle = _kernel32.CreateMutexW(None, False, f"Local\\Macros-deps-{key}")
-    if not handle:
-        raise ctypes.WinError(ctypes.get_last_error())
+    handle, _existed = named_mutex.create(f"Local\\Macros-deps-{key}")
     try:
-        result = _kernel32.WaitForSingleObject(handle, 0)
+        result = named_mutex.wait(handle, 0)
         if result == WAIT_TIMEOUT:
             wait.on_blocked()
             deadline = time.monotonic() + wait.seconds
@@ -335,9 +327,7 @@ def _exclusive(target: Path, wait: Wait) -> Iterator[None]:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
-                result = _kernel32.WaitForSingleObject(
-                    handle, round(min(remaining, WAIT_SLICE_SECONDS) * 1000)
-                )
+                result = named_mutex.wait(handle, round(min(remaining, WAIT_SLICE_SECONDS) * 1000))
             else:
                 wait.on_acquired()
         if result == WAIT_FAILED:
@@ -353,9 +343,9 @@ def _exclusive(target: Path, wait: Wait) -> Iterator[None]:
         try:
             yield
         finally:
-            _kernel32.ReleaseMutex(handle)
+            named_mutex.release(handle)
     finally:
-        _kernel32.CloseHandle(handle)
+        named_mutex.close(handle)
 
 
 def _install_if_stale(
