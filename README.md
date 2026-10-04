@@ -59,7 +59,8 @@ small progress window. Your Python installation is not modified.
 - **Failures.** If the install fails, a dialog shows pip's reason and any
   earlier install is kept.
 - **Launcher crashes.** If the launcher itself cannot start or show an error
-  dialog, the traceback is logged to `%LOCALAPPDATA%\Macros\launcher-error.log`.
+  dialog, the traceback is logged to `launcher-error.log` in the
+  [log folder](#logs).
 
 To work on the code, make a virtualenv with the dev tools. From the repository
 root:
@@ -103,6 +104,21 @@ Or double-click `plugins/macros/Macros.py`. From the dev virtualenv, use
 a copy is already running, a new one says so and exits. You can also start any
 of the apps from `launcher.pyw`: double-click it, or run
 `.venv\Scripts\pythonw launcher.pyw`.
+
+### Logs
+
+Every app writes its log files to one folder, `%LOCALAPPDATA%\Macros\logs`:
+
+- `launcher.log`: the launcher's log.
+- `launcher-error.log`: the launcher's last-resort crash log, for when it
+  cannot show an error dialog.
+- `recipe_calc.log`: Recipe Calc's log, including any unexpected error it
+  showed in a dialog.
+
+Macros writes no log file. It logs to its own window (tray icon, Show / Hide
+Log). If `%LOCALAPPDATA%\Macros\logs` cannot be written, the logs go to
+`%TEMP%\Macros\logs` instead. Older versions of the launcher logged to
+`~/.python_launcher.log`. That file is no longer written and can be deleted.
 
 ## Test
 

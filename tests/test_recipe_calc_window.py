@@ -553,6 +553,20 @@ def test_exception_on_a_worker_thread_is_logged_to_file_and_shown(
     assert "worker blew up" in shown[0]
 
 
+def test_the_dialog_names_the_log_file(error_reporting: tuple[Path, list[str]]) -> None:
+    log_path, shown = error_reporting
+    sys.excepthook(ValueError, ValueError("boom"), None)
+    assert len(shown) == 1
+    assert str(log_path) in shown[0]
+
+
+def test_the_log_lives_in_the_shared_log_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    assert calc_app.default_log_path() == tmp_path / "Macros" / "logs" / "recipe_calc.log"
+
+
 def test_a_failing_dialog_does_not_hide_the_original_error(
     qapp: QtWidgets.QApplication, tmp_path: Path, restore_excepthooks: None
 ) -> None:

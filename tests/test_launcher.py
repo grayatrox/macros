@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from collections.abc import Iterator
@@ -824,11 +825,19 @@ def test_crash_is_logged_under_local_app_data(
 ) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     launcher.write_crash_log("Traceback: boom")
-    log_file = tmp_path / "Macros" / "launcher-error.log"
+    log_file = tmp_path / "Macros" / "logs" / "launcher-error.log"
     assert launcher.crash_log_path() == log_file
     text = log_file.read_text(encoding="utf-8")
     assert "ERROR launcher.crash: Traceback: boom" in text
     assert not (ROOT / "launcher-error.log").exists()
+
+
+def test_main_log_shares_the_folder_but_not_the_file(
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    assert launcher.main_log_path() == tmp_path / "Macros" / "logs" / "launcher.log"
+    assert launcher.main_log_path() != launcher.crash_log_path()
 
 
 def test_crash_log_appends_instead_of_overwriting(
@@ -848,9 +857,12 @@ def test_unwritable_crash_folder_falls_back_to_stderr(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    blocker = tmp_path / "Macros"
-    blocker.write_text("a file where the folder should be", encoding="utf-8")
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    # Block both the log folder and its temp fallback (pluginhost.log_dir).
+    for base in (tmp_path / "local", tmp_path / "temp"):
+        base.mkdir()
+        (base / "Macros").write_text("a file where the folder should be", encoding="utf-8")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "temp"))
     launcher.write_crash_log("Traceback: boom")
     err = capsys.readouterr().err
     assert "Could not write crash log" in err

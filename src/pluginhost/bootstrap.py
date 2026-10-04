@@ -110,12 +110,17 @@ class Wait:
     cancelled: threading.Event | None = None
 
 
-def deps_dir() -> Path:
-    """Private folder the dependencies are installed into for this Python."""
+def data_dir() -> Path:
+    """Per-user folder for what the launcher and its apps keep: dependency installs, logs."""
     local = os.environ.get("LOCALAPPDATA")
     base = Path(local) if local else Path.home() / "AppData" / "Local"
     # Named for Macros, which had the first install; renaming it would reinstall everything.
-    return base / "Macros" / f"deps-py{sys.version_info.major}{sys.version_info.minor}"
+    return base / "Macros"
+
+
+def deps_dir() -> Path:
+    """Private folder the dependencies are installed into for this Python."""
+    return data_dir() / f"deps-py{sys.version_info.major}{sys.version_info.minor}"
 
 
 def _pip(args: list[str], env: dict[str, str] | None = None) -> None:

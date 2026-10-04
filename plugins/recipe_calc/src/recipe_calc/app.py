@@ -31,6 +31,7 @@ from typing import Any, override
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from pluginhost.error_hook import install_excepthook
+from pluginhost.log_dir import log_dir
 from recipe_calc.block_render import BlockRenderer, item_model_ref, model_texture_ref
 from recipe_calc.recipe_book import (
     BreakdownNode,
@@ -979,7 +980,7 @@ class RecipeCalculator(QtWidgets.QWidget):
         event.accept()
 
 
-LOG_PATH = CONFIG_PATH.with_name("recipe_calc.log")
+LOG_NAME = "recipe_calc.log"
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
 
@@ -998,16 +999,17 @@ class ErrorReporter(QtCore.QObject):
 
     _failed = QtCore.Signal(str)
 
-    def __init__(self, show: Callable[[str], None]) -> None:
+    def __init__(self, show: Callable[[str], None], log_path: Path) -> None:
         super().__init__()
         self._show = show
+        self._log_path = log_path
         # Queued automatically when emitted from a worker thread, so the dialog
         # is always created on the GUI thread this object lives in.
         self._failed.connect(self._on_failed)
 
     def notify(self, exc: BaseException, _details: str) -> None:
         """Show ``exc`` to the user; callable from any thread. Its traceback is already logged."""
-        self._failed.emit(f"{type(exc).__name__}: {exc}\n\nDetails are in {LOG_PATH}")
+        self._failed.emit(f"{type(exc).__name__}: {exc}\n\nDetails are in {self._log_path}")
 
     @QtCore.Slot(str)
     def _on_failed(self, text: str) -> None:
@@ -1042,15 +1044,20 @@ def install_error_reporting(
     for handler in handlers:
         handler.setFormatter(formatter)
         root.addHandler(handler)
-    reporter = ErrorReporter(show)
+    reporter = ErrorReporter(show, log_path)
     install_excepthook(reporter.notify, log)
     return reporter
+
+
+def default_log_path() -> Path:
+    """Recipe Calc's log, in the folder every app logs to (pluginhost.log_dir)."""
+    return log_dir() / LOG_NAME
 
 
 def main() -> int:
     """Open the window and run until it closes. Returns the exit code."""
     app = QtWidgets.QApplication(sys.argv)
-    reporter = install_error_reporting(LOG_PATH)
+    reporter = install_error_reporting(default_log_path())
     apply_dark_theme(app)
     window = RecipeCalculator()
     window.show()

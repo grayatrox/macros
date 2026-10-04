@@ -34,9 +34,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from pluginhost.bootstrap import (
     BootstrapError,
-    deps_dir,
     ensure_dependencies,
 )  # needs src on sys.path
+from pluginhost.log_dir import log_dir  # stdlib only, like bootstrap
 from pluginhost.plugin_deps import PluginDeps, PluginDepsError  # stdlib only, like bootstrap
 
 MB_ICONERROR = 0x10
@@ -74,8 +74,9 @@ from PySide6 import (  # noqa: E402 - importable only once bootstrap() has run
 # Settings file location
 SETTINGS_FILE = Path.home() / ".python_launcher_settings.json"
 
-# Under pythonw there is no console, so the log file is the only place errors can go
-LOG_FILE = Path.home() / ".python_launcher.log"
+# Under pythonw there is no console, so the log file is the only place errors can go.
+# Before #704 it was ~/.python_launcher.log; that file is left where it is.
+LOG_NAME = "launcher.log"
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 log = logging.getLogger("launcher")
 # Last-resort crash log; own file, so it does not also feed the main log's handler
@@ -976,9 +977,14 @@ def format_error(exc: BaseException) -> str:
     return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
 
 
+def main_log_path() -> Path:
+    """The launcher's own log, in the folder every app logs to."""
+    return log_dir() / LOG_NAME
+
+
 def crash_log_path() -> Path:
-    """The last-resort crash log, in the per-user folder the dependencies install into."""
-    return deps_dir().parent / CRASH_LOG_NAME
+    """The last-resort crash log, beside the main log."""
+    return log_dir() / CRASH_LOG_NAME
 
 
 def write_crash_log(details: str) -> None:
@@ -1037,7 +1043,7 @@ def configure_logging(path: Path) -> None:
 
 
 def main() -> int:
-    configure_logging(LOG_FILE)
+    configure_logging(main_log_path())
     app = QtWidgets.QApplication(sys.argv)
     # Without this, exceptions raised inside Qt slots go to stderr, which is
     # None under pythonw -- i.e. buttons would silently do nothing.
