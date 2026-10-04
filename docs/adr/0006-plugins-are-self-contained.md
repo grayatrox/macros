@@ -79,6 +79,13 @@ is `app.py`, formerly `Recipe_Calc.py`), and `Recipe_Calc.py` is the entry
 script. Its `__main__` runs the same first-start install as Macros before it
 imports PySide6, so it also starts on a bare Python (#677).
 
+2026-10-05, #697: `pluginhost` also holds startup code the apps had copied:
+`single_instance.py` (the named-mutex single-instance check, used by Macros)
+and `error_hook.py` (the `sys`/`threading` excepthook that logs an uncaught
+exception and hands it to the app to show, used by Macros and Recipe Calc).
+Both stay standard-library only, like the rest of the package; how an error is
+shown (a Qt dialog, a log window) remains each app's own code.
+
 ## Options rejected
 
 - **Keep the code in `src/macros/` (ADR 0002).** This is what was reported as

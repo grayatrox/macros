@@ -22,16 +22,15 @@ import re
 import sys
 import threading
 import time
-import traceback
 import zipfile
 from collections.abc import Callable
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from types import TracebackType
 from typing import Any, override
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from pluginhost.error_hook import install_excepthook
 from recipe_calc.block_render import BlockRenderer, item_model_ref, model_texture_ref
 from recipe_calc.recipe_book import (
     BreakdownNode,
@@ -990,10 +989,11 @@ def show_error_dialog(text: str) -> None:
 
 
 class ErrorReporter(QtCore.QObject):
-    """Logs uncaught exceptions and shows them in a dialog on the GUI thread.
+    """Shows uncaught exceptions in a dialog on the GUI thread.
 
     The launcher starts Recipe Calc without a console, so stderr is invisible:
     an exception in a Qt slot or a worker thread would otherwise vanish.
+    pluginhost.error_hook catches and logs them; this object is its ``notify``.
     """
 
     _failed = QtCore.Signal(str)
@@ -1005,19 +1005,9 @@ class ErrorReporter(QtCore.QObject):
         # is always created on the GUI thread this object lives in.
         self._failed.connect(self._on_failed)
 
-    def report(
-        self, exc_type: type[BaseException], value: BaseException, tb: TracebackType | None
-    ) -> None:
-        """Log the exception with its traceback, then show it to the user."""
-        details = "".join(traceback.format_exception(exc_type, value, tb))
-        log.error("Unhandled exception\n%s", details)
-        self._failed.emit(f"{exc_type.__name__}: {value}\n\nDetails are in {LOG_PATH}")
-
-    def report_thread(self, args: threading.ExceptHookArgs) -> None:
-        """threading.excepthook adapter."""
-        if args.exc_type is SystemExit or args.exc_value is None:
-            return
-        self.report(args.exc_type, args.exc_value, args.exc_traceback)
+    def notify(self, exc: BaseException, _details: str) -> None:
+        """Show ``exc`` to the user; callable from any thread. Its traceback is already logged."""
+        self._failed.emit(f"{type(exc).__name__}: {exc}\n\nDetails are in {LOG_PATH}")
 
     @QtCore.Slot(str)
     def _on_failed(self, text: str) -> None:
@@ -1053,8 +1043,7 @@ def install_error_reporting(
         handler.setFormatter(formatter)
         root.addHandler(handler)
     reporter = ErrorReporter(show)
-    sys.excepthook = reporter.report
-    threading.excepthook = reporter.report_thread
+    install_excepthook(reporter.notify, log)
     return reporter
 
 

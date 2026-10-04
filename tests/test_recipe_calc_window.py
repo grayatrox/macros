@@ -571,7 +571,7 @@ def test_a_failing_dialog_does_not_hide_the_original_error(
 
     reporter = calc_app.install_error_reporting(log_path, broken_dialog)
     try:
-        reporter.report(ValueError, ValueError("original"), None)
+        sys.excepthook(ValueError, ValueError("original"), None)
         assert "ValueError: original" in log_path.read_text(encoding="utf-8")
     finally:
         for handler in list(root.handlers):

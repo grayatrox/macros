@@ -23,12 +23,10 @@ import subprocess
 import sys
 import threading
 import time
-import traceback
 from collections.abc import Callable, Mapping, Sequence
 from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
-from types import TracebackType
 from typing import Any, Protocol, Self, TypedDict, override
 
 # Third-party: installed on first start by pluginhost.bootstrap, which runs before
@@ -44,6 +42,8 @@ from PIL import Image, ImageDraw
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from macros.settings import SETTINGS_PATH, Settings, SettingsError, load_settings
+from pluginhost.error_hook import install_excepthook as install_shared_excepthook
+from pluginhost.single_instance import acquire_single_instance
 
 open_vote_pages: Callable[..., int] | None
 mcvote_import_error: ImportError | None = None
@@ -457,9 +457,6 @@ _user32.PostThreadMessageW.argtypes = [
 ]
 _kernel32.GetModuleHandleW.restype = wintypes.HMODULE
 _kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
-_kernel32.CreateMutexW.restype = wintypes.HANDLE
-_kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
-_kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -470,37 +467,10 @@ _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 # fire twice. A named mutex, unlike the launcher's PID tracking, still works
 # after a reload has replaced the process the launcher started.
 INSTANCE_MUTEX = "Local\\send_to_window-macros"
-ERROR_ALREADY_EXISTS = 183
 
 # Marks a process started by restart_process(), which must wait for the old
 # process to exit and release the mutex rather than refuse to start.
 RESTART_FLAG = "--restarted"
-
-
-def acquire_single_instance(name: str = INSTANCE_MUTEX, wait_seconds: float = 0) -> int | None:
-    """Claim the named mutex. Returns its handle, or None if already held.
-
-    With wait_seconds, keep retrying that long before giving up. The handle
-    must stay open for the life of the process; Windows closes it on exit.
-
-    Raises:
-        OSError: CreateMutexW itself failed (e.g. an invalid name).
-    """
-    deadline = time.monotonic() + wait_seconds
-    while True:
-        handle = _kernel32.CreateMutexW(None, False, name)
-        if not handle:
-            raise ctypes.WinError(ctypes.get_last_error())
-        if ctypes.get_last_error() != ERROR_ALREADY_EXISTS:
-            return int(handle)
-        _kernel32.CloseHandle(handle)
-        if time.monotonic() >= deadline:
-            return None
-        time.sleep(0.1)
-
-
-def release_single_instance(handle: int) -> None:
-    _kernel32.CloseHandle(handle)
 
 
 # The plugins/macros/Macros.py shim. Restarts go through it because argv[0] may
@@ -897,18 +867,15 @@ def make_profiles(settings: Settings) -> list[Profile]:
 def install_excepthook(log: Log) -> None:
     """Send otherwise-uncaught exceptions to `log` and the standard logger.
 
-    Without this an exception raised inside a Qt slot goes to stderr, which is
-    None under pythonw, so the failing action would vanish without a trace.
+    Without this an exception raised inside a Qt slot or a worker thread goes to
+    stderr, which is None under pythonw, so the failing action would vanish
+    without a trace. The hooks themselves are pluginhost's, shared with the
+    other apps.
     """
-
-    def report(
-        exc_type: type[BaseException], value: BaseException, tb: TracebackType | None
-    ) -> None:
-        details = "".join(traceback.format_exception(exc_type, value, tb))
-        logging.getLogger(__name__).error("Unhandled exception\n%s", details)
-        log(f"Unhandled exception\n{details}", "ERROR")
-
-    sys.excepthook = report
+    install_shared_excepthook(
+        lambda _exc, details: log(f"Unhandled exception\n{details}", "ERROR"),
+        logging.getLogger(__name__),
+    )
 
 
 class App:
@@ -1013,7 +980,9 @@ def main(settings_path: Path = SETTINGS_PATH) -> int:
         )
         return 1
     # Kept for the life of the process; Windows releases it on exit.
-    instance = acquire_single_instance(wait_seconds=5 if RESTART_FLAG in sys.argv else 0)
+    instance = acquire_single_instance(
+        INSTANCE_MUTEX, wait_seconds=5 if RESTART_FLAG in sys.argv else 0
+    )
     if instance is None:
         ctypes.windll.user32.MessageBoxW(
             0,

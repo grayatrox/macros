@@ -210,11 +210,14 @@ def test_the_window_icon_is_drawn(qapp: QtWidgets.QApplication) -> None:
 def test_exception_in_a_qt_slot_is_logged_with_its_traceback(
     qapp: QtWidgets.QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import threading
+
     from PySide6 import QtCore
 
     from macros.app import install_excepthook
 
     monkeypatch.setattr(sys, "excepthook", sys.excepthook)  # restored after the test
+    monkeypatch.setattr(threading, "excepthook", threading.excepthook)
     logged: list[tuple[str, str]] = []
     install_excepthook(lambda message, level="INFO": logged.append((level, message)))
 
