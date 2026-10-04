@@ -13,7 +13,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from PySide6 import QtCore, QtGui, QtTest, QtWidgets
@@ -746,3 +746,70 @@ def test_closing_during_a_failing_install_still_closes_without_a_dialog(
 def test_closing_with_no_install_running_closes_at_once(window: _Window) -> None:
     window.app.show()
     assert window.app.close() is True
+
+
+# --- Swallowed errors are logged, not discarded (#690) ----------------------
+
+
+@pytest.fixture
+def settings_file(
+    launcher: ModuleType,
+    qapp: QtWidgets.QApplication,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """A settings path the launcher is pointed at; the test decides what is in it."""
+    path = tmp_path / "settings.json"
+    monkeypatch.setattr(launcher, "SETTINGS_FILE", path)
+    monkeypatch.setattr(launcher, "show_error", lambda _parent, _title, _msg: None)
+    return path
+
+
+@pytest.mark.parametrize("content", ["{ not json", "[1, 2]"], ids=["unparseable", "not-an-object"])
+def test_a_corrupt_settings_file_is_reported_and_its_contents_kept(
+    launcher: ModuleType,
+    settings_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    content: str,
+) -> None:
+    settings = settings_file
+    settings.write_text(content, encoding="utf-8")
+    warnings: list[str] = []
+    monkeypatch.setattr(launcher, "show_warning", lambda _parent, _title, msg: warnings.append(msg))
+
+    with caplog.at_level("WARNING", logger="launcher"):
+        app = launcher.PythonLauncherGUI(
+            deps=PluginDeps(target=settings.parent / "deps", install=_Pip())
+        )
+    try:
+        backup = settings.with_name("settings.json.bad")
+        assert backup.read_text(encoding="utf-8") == content
+        assert not settings.exists()  # nothing overwrote it; only a later save writes a new one
+        (warning,) = warnings
+        assert str(settings) in warning
+        assert str(backup) in warning
+        assert any(str(settings) in r.getMessage() for r in caplog.records)
+        assert app.settings == launcher.DEFAULT_SETTINGS
+    finally:
+        app.poll_timer.stop()
+        app.deleteLater()
+
+
+def test_a_failed_dark_titlebar_call_is_logged_at_debug(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    class _Window:
+        def winId(self) -> int:  # noqa: N802 - mirrors the Qt method name
+            return 1
+
+    class _NoDwm:
+        @property
+        def dwmapi(self) -> object:
+            raise OSError("no dwmapi")
+
+    monkeypatch.setattr(launcher.sys, "platform", "win32")
+    monkeypatch.setattr(launcher.ctypes, "windll", _NoDwm(), raising=False)
+    with caplog.at_level("DEBUG", logger="launcher"):
+        launcher.apply_dark_titlebar(cast(QtWidgets.QWidget, _Window()))
+    assert any("title bar" in r.getMessage() and r.levelname == "DEBUG" for r in caplog.records)

@@ -19,12 +19,14 @@ considered "alive" if that specific child is still running -- no PID reuse races
 import contextlib
 import ctypes
 import json
+import logging
 import os
 import subprocess
 import sys
 import threading
 import tomllib
 import traceback
+from logging.handlers import RotatingFileHandler
 from pathlib import Path, PurePath
 from types import TracebackType
 from typing import Any, NamedTuple, override
@@ -67,6 +69,11 @@ from PySide6 import (  # noqa: E402 - importable only once bootstrap() has run
 
 # Settings file location
 SETTINGS_FILE = Path.home() / ".python_launcher_settings.json"
+
+# Under pythonw there is no console, so the log file is the only place errors can go
+LOG_FILE = Path.home() / ".python_launcher.log"
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+log = logging.getLogger("launcher")
 
 # This file, so the launcher never lists itself as something to launch
 SELF_PATH = Path(__file__).resolve()
@@ -339,8 +346,9 @@ def apply_dark_titlebar(window: QtWidgets.QWidget) -> None:
             )
             if result == 0:
                 break
-    except Exception:
-        pass
+    except (OSError, AttributeError, ValueError):
+        # Cosmetic only; OSError/AttributeError is what a missing dwmapi raises.
+        log.debug("Could not set the dark title bar", exc_info=True)
 
 
 # --- Dialogs ------------------------------------------------------------------
@@ -417,17 +425,40 @@ class PythonLauncherGUI(QtWidgets.QWidget):
     # --- Settings ----------------------------------------------------------
 
     def load_settings(self) -> dict[str, Any]:
-        """Load settings, filling in any keys missing from an older file."""
+        """Load settings, filling in any keys missing from an older file.
+
+        A file that cannot be read as a settings object is logged, set aside as
+        ``<name>.bad`` so the next save cannot overwrite it, and reported to the user.
+        """
         settings = DEFAULT_SETTINGS.copy()
-        if SETTINGS_FILE.exists():
-            try:
-                with SETTINGS_FILE.open(encoding="utf-8") as f:
-                    loaded = json.load(f)
-                if isinstance(loaded, dict):
-                    settings.update(loaded)
-            except Exception as e:
-                print(f"Error loading settings: {e}")
+        if not SETTINGS_FILE.exists():
+            return settings
+        try:
+            with SETTINGS_FILE.open(encoding="utf-8") as f:
+                loaded = json.load(f)
+            if not isinstance(loaded, dict):
+                raise ValueError(f"expected a JSON object, found {type(loaded).__name__}")
+        except (OSError, ValueError) as exc:  # ValueError covers JSON and UTF-8 decode errors
+            log.exception("Could not load settings from %s", SETTINGS_FILE)
+            self.report_bad_settings(exc)
+        else:
+            settings.update(loaded)
         return settings
+
+    def report_bad_settings(self, exc: Exception) -> None:
+        """Keep an unreadable settings file as ``.bad`` and tell the user."""
+        backup = SETTINGS_FILE.with_name(SETTINGS_FILE.name + ".bad")
+        try:
+            SETTINGS_FILE.replace(backup)
+            kept = f"Your old file was kept as {backup}."
+        except OSError:
+            log.exception("Could not set %s aside as %s", SETTINGS_FILE, backup)
+            kept = "It could not be set aside and will be overwritten the next time settings save."
+        show_warning(
+            self,
+            "Settings not loaded",
+            f"Could not read {SETTINGS_FILE}: {exc}\n\nDefaults are being used. {kept}",
+        )
 
     def save_settings(self) -> None:
         """Save current settings to JSON file."""
@@ -956,7 +987,20 @@ def report_uncaught(
     report_error("Python File Launcher error", format_error(value))
 
 
+def configure_logging(path: Path) -> None:
+    """Log to `path`; if it cannot be opened, carry on without a log file."""
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    try:
+        handler = RotatingFileHandler(path, maxBytes=256_000, backupCount=1, encoding="utf-8")
+    except OSError:
+        return  # nowhere to report this: no console under pythonw
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    root.addHandler(handler)
+
+
 def main() -> int:
+    configure_logging(LOG_FILE)
     app = QtWidgets.QApplication(sys.argv)
     # Without this, exceptions raised inside Qt slots go to stderr, which is
     # None under pythonw -- i.e. buttons would silently do nothing.
