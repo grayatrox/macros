@@ -656,7 +656,27 @@ def test_waiting_for_a_hung_install_gives_up_and_says_why(
     assert isinstance(errors[0], BootstrapError)
     message = str(errors[0])
     assert "Another app is installing" in message
+    assert "has not finished after 0.2 seconds." in message
     assert "start this app again" in message
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [
+        (600.0, "10 minutes"),
+        (60.0, "1 minute"),
+        (120.0, "2 minutes"),
+        (90.0, "1 minute 30 seconds"),
+        (150.0, "2 minutes 30 seconds"),
+        (2.0, "2 seconds"),
+        (1.0, "1 second"),
+        (0.2, "0.2 seconds"),
+        (59.0, "59 seconds"),
+        (90.4, "1 minute 30 seconds"),
+    ],
+)
+def test_wait_limit_is_described_in_readable_units(seconds: float, expected: str) -> None:
+    assert bootstrap._describe_duration(seconds) == expected
 
 
 # ── waiting for another app is shown, and can be cancelled (#695) ────────────

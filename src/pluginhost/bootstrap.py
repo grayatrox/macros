@@ -281,6 +281,28 @@ WAIT_FAILED = 0xFFFFFFFF
 WAIT_SLICE_SECONDS = 0.1  # how often a waiting app looks at its Cancel button
 
 
+SECONDS_PER_MINUTE = 60
+
+
+def _describe_duration(seconds: float) -> str:
+    """Return ``seconds`` as readable text, e.g. "10 minutes" or "1 minute 30 seconds".
+
+    Under a minute the value is shown as given ("2 seconds", "0.2 seconds"); from a
+    minute up it is rounded to whole seconds.
+    """
+
+    def unit(count: float, name: str) -> str:
+        return f"{count:g} {name}" if count == 1 else f"{count:g} {name}s"
+
+    if seconds < SECONDS_PER_MINUTE:
+        return unit(round(seconds, 1), "second")
+    minutes, rest = divmod(round(seconds), SECONDS_PER_MINUTE)
+    parts = [unit(minutes, "minute")]
+    if rest:
+        parts.append(unit(rest, "second"))
+    return " ".join(parts)
+
+
 @contextmanager
 def _exclusive(target: Path, wait: Wait) -> Iterator[None]:
     """Hold the install mutex for ``target`` against every other process and thread.
@@ -323,7 +345,7 @@ def _exclusive(target: Path, wait: Wait) -> Iterator[None]:
         if result == WAIT_TIMEOUT:
             raise BootstrapError(
                 "Another app is installing the required components into:\n\n"
-                f"{target}\n\nand has not finished after {wait.seconds / 60:g} minutes. "
+                f"{target}\n\nand has not finished after {_describe_duration(wait.seconds)}. "
                 "Wait for it to finish, then start this app again. If it seems stuck, close "
                 "the other "
                 "app (or end its Python process in Task Manager) and start this app again."
