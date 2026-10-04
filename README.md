@@ -2,7 +2,7 @@
 
 Small Windows tools for gaming, mostly Minecraft:
 
-- **`Macros.py`** (code in `src/macros/`): a system-tray app (it calls itself
+- **`plugins/macros/Macros.py`** (code in `src/macros/`): a system-tray app (it calls itself
   *send_to_window*) that
   listens for global hotkeys and runs per-game macros. It only acts when the
   matching game is focused, checking both the window title and the owning
@@ -25,13 +25,14 @@ Small Windows tools for gaming, mostly Minecraft:
   vote. `python -m macros.mcvote` runs the older fully automatic Selenium
   flow for captcha-free findmcserver.com pages.
 
-- **`launcher.pyw`**: a small PySide6 (Qt) GUI that lists the apps in a folder
-  and its subfolders, and starts or stops them. Like `Macros.py`, it installs
-  its components on first start (see Install). An app is a script declared by
-  a `launcher-app.toml` (see Configure).
+- **`launcher.pyw`**: a small PySide6 (Qt) GUI that lists the apps in
+  `plugins/` and starts or stops them. Like `Macros.py`, it installs its
+  components on first start (see Install). An app is a folder in `plugins/`
+  with a `launcher-app.toml` (see Configure).
 
-`Recipe Calc/` is a separate project with its own tracker and is not covered
-here.
+Every launchable app lives in its own folder under `plugins/`. Shared code,
+tooling and tests stay at the repository root. `plugins/recipe_calc/` is a
+separate project with its own tracker and is not covered here.
 
 ## Install
 
@@ -83,13 +84,13 @@ $env:PYTHONPATH = "src"; .venv\Scripts\python -m macros.mcvote https://findmcser
 ## Run
 
 ```powershell
-python Macros.py
+python plugins/macros/Macros.py
 ```
 
-Or double-click `Macros.py`. From the dev virtualenv, use
+Or double-click `plugins/macros/Macros.py`. From the dev virtualenv, use
 `.venv\Scripts\python tools/tasks.py run`. This starts the app. Its tray icon has Show / Hide Log, Reload and Quit. If
 a copy is already running, a new one says so and exits. You can also start any
-of the scripts from `launcher.pyw`: double-click it, or run
+of the apps from `launcher.pyw`: double-click it, or run
 `.venv\Scripts\pythonw launcher.pyw`.
 
 ## Test
@@ -132,14 +133,19 @@ Everything else is in the source:
 - **Userscript sites.** Add a site to the userscript's `SELECTORS` and `@match`
   lines when you add a vote URL on a new host.
 - **Launcher.** `launcher.pyw` remembers its folder and options in
-  `~/.python_launcher_settings.json`. It lists only scripts declared by a
-  `launcher-app.toml` in their folder, found anywhere under the chosen folder:
+  `~/.python_launcher_settings.json`. The folder starts as this repository's
+  `plugins/`. It lists only scripts declared by a `launcher-app.toml` in a
+  folder directly inside the chosen one, such as
+  `plugins/recipe_calc/launcher-app.toml`:
 
   ```toml
   script = "Recpe_Calc.py"
   ```
 
   `script` must be a relative path to a `.py` or `.pyw` file inside that
-  folder. Other `.py` files, such as package modules, tools and tests, are not
-  listed. A bad manifest is named in a warning, and the other apps are still
-  listed. The reasoning is in `docs/adr/0001-launcher-app-manifests.md`.
+  folder. A manifest in the chosen folder itself, or nested deeper, is ignored,
+  as is every other `.py` file. A bad manifest is named in a warning, and the
+  other apps are still listed. The reasoning is in
+  `docs/adr/0001-launcher-app-manifests.md` and
+  `docs/adr/0002-apps-live-in-plugins.md`. To add an app, give it a folder in
+  `plugins/` with a manifest.

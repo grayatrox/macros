@@ -2,7 +2,7 @@
 macros.app - the "send_to_window" hotkey app
 ────────────────────────────────────────────
 (Its window, tray icon and dialogs are titled "send_to_window". Start it with
-the Macros.py shim at the repository root, or `python -m macros`.)
+the plugins/macros/Macros.py shim, or `python -m macros`.)
 
 A persistent background app that:
   • Sits in the system tray (right-click → Show Log / Hide Log / Quit)
@@ -450,9 +450,9 @@ def release_single_instance(handle: int) -> None:
     _kernel32.CloseHandle(handle)
 
 
-# The repository-root shim. Restarts go through it because argv[0] may be
-# src/macros/__main__.py (`python -m macros`), which cannot run as a script.
-ENTRY_SCRIPT = Path(__file__).resolve().parents[2] / "Macros.py"
+# The plugins/macros/Macros.py shim. Restarts go through it because argv[0] may
+# be src/macros/__main__.py (`python -m macros`), which cannot run as a script.
+ENTRY_SCRIPT = Path(__file__).resolve().parents[2] / "plugins" / "macros" / "Macros.py"
 
 
 def restart_process() -> None:

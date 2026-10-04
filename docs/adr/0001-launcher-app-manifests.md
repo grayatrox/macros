@@ -1,6 +1,11 @@
 # 1. Apps declare themselves to the launcher with `launcher-app.toml`
 
-Date: 2026-10-04. Status: accepted. Work package: #659.
+Date: 2026-10-04. Status: accepted; where to search superseded by
+[ADR 0002](0002-apps-live-in-plugins.md). Work package: #659.
+
+> Since ADR 0002 the launcher no longer searches recursively. It reads only
+> `<folder>/*/launcher-app.toml`, and the apps live in `plugins/<app>/`. The
+> manifest format and its rules below still apply.
 
 ## Context
 

@@ -88,10 +88,10 @@ class ExitedError(Exception):
     pass
 
 
-# However the app was started - via the root shim, or `python -m macros`, whose
-# argv[0] is src/macros/__main__.py and cannot be run as a plain script - the
-# new copy is started through the shim (OP #643).
-SHIM = str(ROOT / "Macros.py")
+# However the app was started - via the plugins/macros/Macros.py shim, or
+# `python -m macros`, whose argv[0] is src/macros/__main__.py and cannot be run
+# as a plain script - the new copy is started through the shim (OP #643).
+SHIM = str(ROOT / "plugins" / "macros" / "Macros.py")
 MAIN = str(ROOT / "src" / "macros" / "__main__.py")
 
 

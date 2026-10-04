@@ -63,7 +63,7 @@ def commands(verb: str, extra: Sequence[str], env: Mapping[str, str]) -> tuple[C
         ),
         "typecheck": (_py("mypy"),),
         "test": (_py("pytest"),),
-        "run": ((sys.executable, "Macros.py", *extra),),
+        "run": ((sys.executable, "plugins/macros/Macros.py", *extra),),
     }
     return table[verb]
 

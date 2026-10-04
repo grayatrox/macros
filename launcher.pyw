@@ -1,7 +1,7 @@
 #!/usr/bin/env pythonw
 """
 Python File Launcher GUI
-A dark-themed PySide6 (Qt) application to scan folders for Python files and launch them.
+A dark-themed PySide6 (Qt) application that lists the apps in a plugins folder and launches them.
 
 Saved as .pyw so double-clicking runs it under pythonw.exe with no console
 window. Run `python launcher.pyw` from a terminal if you want tracebacks on
@@ -64,24 +64,24 @@ from PySide6 import (  # noqa: E402 - importable only once bootstrap() has run
 # Settings file location
 SETTINGS_FILE = Path.home() / ".python_launcher_settings.json"
 
+# This file, so the launcher never lists itself as something to launch
+SELF_PATH = Path(__file__).resolve()
+
+# Where this repo keeps its apps, one folder each; scanned until another is chosen
+PLUGINS_DIR = SELF_PATH.parent / "plugins"
+
 # Default settings
 DEFAULT_SETTINGS: dict[str, Any] = {
-    "last_folder": str(Path.cwd()),
+    "last_folder": str(PLUGINS_DIR),
     "last_file": "",
     "launch_mode": "console",
     "single_instance": True,
 }
 
-# Directories that never contain anything worth launching
-SKIP_DIRS = {"__pycache__", ".venv", "venv", "env", ".git", ".idea", "site-packages"}
-
-# An app is a script declared by this file in its folder; nothing else is listed.
-# See docs/adr/0001-launcher-app-manifests.md.
+# An app is a script declared by this file in its own folder, directly inside
+# the scanned folder; nothing else is listed. See docs/adr/0001 and 0002.
 MANIFEST_NAME = "launcher-app.toml"
 SCRIPT_SUFFIXES = {".py", ".pyw"}
-
-# This file, so the launcher never lists itself as something to launch
-SELF_PATH = Path(__file__).resolve()
 
 # --- Dark palette -----------------------------------------------------------
 BG = "#1b1d21"  # window background
@@ -170,17 +170,18 @@ def read_manifest(manifest: Path) -> Path:
 
 
 def find_apps(folder: Path) -> AppScan:
-    """Find every app declared by a launcher-app.toml anywhere under folder.
+    """Find every app declared by a ``<folder>/*/launcher-app.toml``.
 
-    Searches all subfolders except SKIP_DIRS, and never lists the launcher
-    itself. A bad manifest is reported in ``problems`` rather than raised, so
-    one broken app does not hide the others.
+    Looks one level down only: a manifest in ``folder`` itself or nested deeper
+    is ignored, and nothing below an app's folder is walked. Never lists the
+    launcher itself. A bad manifest is reported in ``problems`` rather than
+    raised, so one broken app does not hide the others.
     """
     scripts: list[Path] = []
     problems: list[str] = []
     seen: set[Path] = set()
-    for manifest in sorted(folder.rglob(MANIFEST_NAME)):
-        if SKIP_DIRS.intersection(manifest.parts) or not manifest.is_file():
+    for manifest in sorted(folder.glob(f"*/{MANIFEST_NAME}")):
+        if not manifest.is_file():
             continue
         try:
             script = read_manifest(manifest)
@@ -570,7 +571,7 @@ class PythonLauncherGUI(QtWidgets.QWidget):
         count = 0
         for script in sorted(scan.scripts):
             rel_path = script.relative_to(folder)
-            parent_dir = str(rel_path.parent) if rel_path.parent != Path() else "Root"
+            parent_dir = str(rel_path.parent)  # never ".": apps sit one folder down
             file_dict.setdefault(parent_dir, []).append((script.name, str(script)))
             count += 1
 
@@ -580,7 +581,9 @@ class PythonLauncherGUI(QtWidgets.QWidget):
         if not count:
             self.selected_file = None
             self.update_buttons()
-            self.set_status(f"No apps found: none of these folders has a {MANIFEST_NAME}.")
+            self.set_status(
+                f"No apps found: no folder directly inside this one has a {MANIFEST_NAME}."
+            )
             return
 
         for dir_name in sorted(file_dict):

@@ -48,7 +48,7 @@ def test_lint_uses_github_annotations_only_in_actions() -> None:
 
 def test_run_passes_extra_arguments_to_the_app() -> None:
     (command,) = tasks.commands("run", ["--restarted"], {})
-    assert command == (sys.executable, "Macros.py", "--restarted")
+    assert command == (sys.executable, "plugins/macros/Macros.py", "--restarted")
 
 
 def test_unknown_verb_is_a_key_error() -> None:

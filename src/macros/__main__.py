@@ -1,4 +1,4 @@
-"""``python -m macros`` (and the root Macros.py shim): start the hotkey app.
+"""``python -m macros`` (and the plugins/macros/Macros.py shim): start the hotkey app.
 
 Dependencies are installed first if this is the first start; see
 :mod:`macros.bootstrap`.

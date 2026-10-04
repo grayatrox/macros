@@ -82,24 +82,47 @@ def _problems(launcher: ModuleType, folder: Path) -> list[str]:
 
 
 def test_this_repo_lists_only_its_declared_apps(launcher: ModuleType) -> None:
-    # The acceptance case: nothing under src/, tests/ or tools/, apps at the
-    # root and in a subfolder still found.
-    assert _find(launcher, ROOT) == ["Macros.py", "Recipe Calc/Recpe_Calc.py"]
+    # The acceptance case: every app lives in plugins/<app>/.
+    assert _find(launcher, ROOT / "plugins") == [
+        "macros/Macros.py",
+        "recipe_calc/Recpe_Calc.py",
+    ]
+
+
+def test_this_repo_has_no_apps_outside_plugins(launcher: ModuleType) -> None:
+    assert _find(launcher, ROOT) == []
 
 
 def test_undeclared_python_files_are_not_apps(launcher: ModuleType, tmp_path: Path) -> None:
-    _app(tmp_path, "main.py")
-    _touch(tmp_path / "helper.py")
-    _touch(tmp_path / "src" / "pkg" / "__init__.py")
-    _touch(tmp_path / "src" / "pkg" / "app.py")
-    _touch(tmp_path / "tests" / "test_app.py")
-    _touch(tmp_path / "tools" / "tasks.py")
-    assert _find(launcher, tmp_path) == ["main.py"]
+    _app(tmp_path / "main", "main.py")
+    _touch(tmp_path / "main" / "helper.py")
+    _touch(tmp_path / "loose.py")
+    _touch(tmp_path / "pkg" / "__init__.py")
+    _touch(tmp_path / "pkg" / "app.py")
+    assert _find(launcher, tmp_path) == ["main/main.py"]
 
 
-def test_an_app_nested_several_levels_deep_is_found(launcher: ModuleType, tmp_path: Path) -> None:
-    _app(tmp_path / "a" / "b" / "c" / "Deep App", "deep.py")
-    assert _find(launcher, tmp_path) == ["a/b/c/Deep App/deep.py"]
+def test_only_apps_one_level_down_are_found(launcher: ModuleType, tmp_path: Path) -> None:
+    # plugins/<app>/launcher-app.toml and nothing else: not a manifest in the
+    # scanned folder itself, nor one nested deeper, nor one outside it.
+    plugins = tmp_path / "plugins"
+    _app(plugins / "app")
+    _app(plugins, "top.py")
+    _app(plugins / "app" / "inner", "inner.py")
+    _app(plugins / "a" / "b" / "Deep App", "deep.py")
+    _app(tmp_path / "outside", "outside.py")
+    assert _find(launcher, plugins) == ["app/app.py"]
+
+
+@pytest.mark.parametrize("noise", ["__pycache__", ".venv", "venv", "env", ".git", "site-packages"])
+def test_a_folder_named_like_noise_above_the_plugins_dir_does_not_hide_apps(
+    launcher: ModuleType, tmp_path: Path, noise: str
+) -> None:
+    # Only the plugins dir's direct children are looked at, so where that dir
+    # sits on disk cannot hide an app.
+    plugins = tmp_path / noise / "plugins"
+    _app(plugins / "keep")
+    assert _find(launcher, plugins) == ["keep/app.py"]
 
 
 def test_pyw_and_a_script_in_a_subfolder_of_the_manifest_are_accepted(
@@ -109,13 +132,6 @@ def test_pyw_and_a_script_in_a_subfolder_of_the_manifest_are_accepted(
     _touch(tmp_path / "tool" / "bin" / "run.py")
     _manifest(tmp_path / "tool", 'script = "bin/run.py"')
     assert _find(launcher, tmp_path) == ["gui/gui.pyw", "tool/bin/run.py"]
-
-
-@pytest.mark.parametrize("skip", ["__pycache__", ".venv", "venv", ".git", "site-packages"])
-def test_find_apps_skips_noise_directories(launcher: ModuleType, tmp_path: Path, skip: str) -> None:
-    _app(tmp_path / "keep")
-    _app(tmp_path / skip / "nested")
-    assert _find(launcher, tmp_path) == ["keep/app.py"]
 
 
 def test_find_apps_excludes_the_launcher_itself(
@@ -214,7 +230,7 @@ def window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[_Window]:
     start = tmp_path / "start"
-    _app(start, "first.py")
+    _app(start / "first", "first.py")
     settings = tmp_path / "settings.json"
     settings.write_text(json.dumps({"last_folder": str(start)}), encoding="utf-8")
     monkeypatch.setattr(launcher, "SETTINGS_FILE", settings)
@@ -232,6 +248,27 @@ def window(
         app.deleteLater()
 
 
+def test_with_no_saved_folder_the_repos_plugins_dir_is_scanned(
+    launcher: ModuleType,
+    qapp: QtWidgets.QApplication,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(launcher, "SETTINGS_FILE", tmp_path / "never-saved.json")
+    errors: list[str] = []
+    monkeypatch.setattr(launcher, "show_error", lambda _parent, _title, msg: errors.append(msg))
+    monkeypatch.setattr(launcher, "show_warning", lambda _parent, _title, msg: errors.append(msg))
+    app = launcher.PythonLauncherGUI()
+    try:
+        (entry,) = app.findChildren(QtWidgets.QLineEdit)
+        assert entry.text() == str(ROOT / "plugins")
+        assert _listed(_Window(app, entry, errors, [])) == ["Macros.py", "Recpe_Calc.py"]
+        assert errors == []
+    finally:
+        app.poll_timer.stop()
+        app.deleteLater()
+
+
 def test_folder_box_starts_with_the_saved_folder_scanned(window: _Window, tmp_path: Path) -> None:
     assert window.entry.text() == str(tmp_path / "start")
     assert _listed(window) == ["first.py"]
@@ -239,7 +276,7 @@ def test_folder_box_starts_with_the_saved_folder_scanned(window: _Window, tmp_pa
 
 def test_typing_a_folder_and_leaving_the_box_rescans_it(window: _Window, tmp_path: Path) -> None:
     other = tmp_path / "other"
-    _app(other, "second.py")
+    _app(other / "second", "second.py")
     _type(window, str(other))
     _commit_by_leaving(window)
     assert window.errors == []
@@ -249,7 +286,7 @@ def test_typing_a_folder_and_leaving_the_box_rescans_it(window: _Window, tmp_pat
 
 def test_enter_commits_the_typed_folder(window: _Window, tmp_path: Path) -> None:
     other = tmp_path / "other"
-    _app(other, "second.py")
+    _app(other / "second", "second.py")
     _type(window, str(other))
     QtTest.QTest.keyClick(window.entry, QtCore.Qt.Key.Key_Return)
     assert _listed(window) == ["second.py"]
@@ -263,7 +300,7 @@ def test_enter_rescans_even_when_the_folder_is_unchanged(window: _Window, tmp_pa
 
 def test_pasted_path_in_quotes_is_accepted(window: _Window, tmp_path: Path) -> None:
     other = tmp_path / "other"
-    _app(other, "second.py")
+    _app(other / "second", "second.py")
     _type(window, f'  "{other}"  ')
     _commit_by_leaving(window)
     assert window.errors == []
@@ -284,7 +321,7 @@ def test_missing_folder_is_rejected_and_the_previous_one_kept(
 
 
 def test_a_file_is_rejected_as_a_folder(window: _Window, tmp_path: Path) -> None:
-    _type(window, str(tmp_path / "start" / "first.py"))
+    _type(window, str(tmp_path / "start" / "first" / "first.py"))
     _commit_by_leaving(window)
     assert len(window.errors) == 1
     assert window.entry.text() == str(tmp_path / "start")
@@ -322,7 +359,7 @@ def test_browse_still_updates_the_box_and_rescans(
     launcher: ModuleType, window: _Window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     other = tmp_path / "other"
-    _app(other, "second.py")
+    _app(other / "second", "second.py")
     monkeypatch.setattr(launcher, "ask_directory", lambda _parent, _title, _start: str(other))
     window.app.pick_folder()
     assert window.entry.text() == str(other)
@@ -345,6 +382,8 @@ def test_a_folder_with_no_apps_lists_nothing_and_does_not_warn(
 ) -> None:
     other = tmp_path / "other"
     _touch(other / "loose.py")
+    _touch(other / "nested" / "deeper" / "deep.py")
+    _manifest(other / "nested" / "deeper", 'script = "deep.py"')
     _type(window, str(other))
     window.app.commit_folder()
     assert window.errors == []
@@ -387,7 +426,7 @@ def started(launcher: ModuleType, monkeypatch: pytest.MonkeyPatch) -> list[tuple
 
 
 def _launch_first(window: _Window, tmp_path: Path) -> str:
-    script = str(tmp_path / "start" / "first.py")
+    script = str(tmp_path / "start" / "first" / "first.py")
     window.app.tree.setCurrentItem(window.app.items_by_path[script])
     window.app.launch_button.click()
     return script
