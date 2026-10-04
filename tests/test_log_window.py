@@ -7,6 +7,7 @@ must only change once the GUI thread's event loop gets to the request.
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -201,3 +202,34 @@ def test_quit_from_another_thread_ends_the_event_loop(
 
 def test_the_window_icon_is_drawn(qapp: QtWidgets.QApplication) -> None:
     assert not make_window_icon().isNull()
+
+
+# ── Exceptions raised inside Qt slots (OP #676) ──────────────────────────────
+
+
+def test_exception_in_a_qt_slot_is_logged_with_its_traceback(
+    qapp: QtWidgets.QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PySide6 import QtCore
+
+    from macros.app import install_excepthook
+
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)  # restored after the test
+    logged: list[tuple[str, str]] = []
+    install_excepthook(lambda message, level="INFO": logged.append((level, message)))
+
+    class Emitter(QtCore.QObject):
+        fired = QtCore.Signal()
+
+    def broken_slot() -> None:
+        raise ValueError("slot blew up")
+
+    emitter = Emitter()
+    emitter.fired.connect(broken_slot)
+    emitter.fired.emit()
+
+    assert len(logged) == 1
+    level, message = logged[0]
+    assert level == "ERROR"
+    assert "ValueError: slot blew up" in message
+    assert "Traceback" in message

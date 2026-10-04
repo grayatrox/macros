@@ -17,15 +17,18 @@ automatically on first start (pluginhost.bootstrap).
 import ctypes
 import inspect
 import io
+import logging
 import os
 import subprocess
 import sys
 import threading
 import time
+import traceback
 from collections.abc import Callable, Mapping, Sequence
 from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
+from types import TracebackType
 from typing import Any, Protocol, Self, TypedDict, override
 
 # Third-party: installed on first start by pluginhost.bootstrap, which runs before
@@ -891,10 +894,28 @@ def make_profiles(settings: Settings) -> list[Profile]:
     ]
 
 
+def install_excepthook(log: Log) -> None:
+    """Send otherwise-uncaught exceptions to `log` and the standard logger.
+
+    Without this an exception raised inside a Qt slot goes to stderr, which is
+    None under pythonw, so the failing action would vanish without a trace.
+    """
+
+    def report(
+        exc_type: type[BaseException], value: BaseException, tb: TracebackType | None
+    ) -> None:
+        details = "".join(traceback.format_exception(exc_type, value, tb))
+        logging.getLogger(__name__).error("Unhandled exception\n%s", details)
+        log(f"Unhandled exception\n{details}", "ERROR")
+
+    sys.excepthook = report
+
+
 class App:
     def __init__(self, settings: Settings) -> None:
         self.profiles = make_profiles(settings)
         self.log_win = LogWindow()
+        install_excepthook(self.log_win.log)
         self._tray: Any = None  # pystray.Icon; pystray ships no type information
 
     # ── Hotkey registration ──────────────────────────────────────────────────
