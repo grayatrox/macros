@@ -490,14 +490,11 @@ def test_a_new_search_restarts_icon_filling_for_the_new_rows(
 
 @pytest.fixture
 def error_reporting(
-    qapp: QtWidgets.QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    qapp: QtWidgets.QApplication, tmp_path: Path, restore_excepthooks: None
 ) -> Iterator[tuple[Path, list[str]]]:
     """Install the hooks with a temp log file and a recording dialog."""
     import logging
-    import threading
 
-    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
-    monkeypatch.setattr(threading, "excepthook", threading.excepthook)
     root = logging.getLogger()
     handlers_before = list(root.handlers)
     shown: list[str] = []
@@ -557,11 +554,10 @@ def test_exception_on_a_worker_thread_is_logged_to_file_and_shown(
 
 
 def test_a_failing_dialog_does_not_hide_the_original_error(
-    qapp: QtWidgets.QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    qapp: QtWidgets.QApplication, tmp_path: Path, restore_excepthooks: None
 ) -> None:
     import logging
 
-    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
     root = logging.getLogger()
     handlers_before = list(root.handlers)
     log_path = tmp_path / "recipe_calc.log"
