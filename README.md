@@ -32,7 +32,8 @@ Small Windows tools for gaming, mostly Minecraft:
 
 Every launchable app lives in its own folder under `plugins/`. Shared code,
 tooling and tests stay at the repository root. `plugins/recipe_calc/` is a
-separate project with its own tracker and is not covered here.
+separate project with its own tracker and is not described here, though the
+`lint`, `typecheck` and `test` verbs below check it too.
 
 ## Install
 

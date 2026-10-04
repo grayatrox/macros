@@ -41,8 +41,9 @@ dev = [
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
-# The macros package lives under src/; tools/ is imported from the root.
-pythonpath = ["src", "."]
+# The macros package lives under src/; tools/ is imported from the root;
+# Recipe Calc's modules import each other by bare name from their own folder.
+pythonpath = ["src", ".", "plugins/recipe_calc"]
 addopts = ["--strict-markers", "--strict-config", "-ra"]
 
 # ---------------------------------------------------------------------------
@@ -52,9 +53,8 @@ addopts = ["--strict-markers", "--strict-config", "-ra"]
 line-length = 100
 target-version = "py312"
 extend-include = ["*.pyw"]  # launcher.pyw; ruff skips .pyw by default
-src = ["src", "."]  # first-party: the macros package and tools/
-# plugins/recipe_calc/ is a separate OpenProject project with its own tooling decisions.
-extend-exclude = ["plugins/recipe_calc"]
+# first-party: the macros package, tools/, and Recipe Calc's modules
+src = ["src", ".", "plugins/recipe_calc"]
 
 [tool.ruff.lint]
 select = [
@@ -91,8 +91,9 @@ select = [
 python_version = "3.12"
 strict = true
 warn_unreachable = true
-files = ["plugins/macros/Macros.py", "launcher.pyw", "src", "tools", "tests"]
-mypy_path = "src"
+files = ["plugins/macros/Macros.py", "plugins/recipe_calc", "launcher.pyw", "src", "tools", "tests"]
+# Recipe Calc's modules import each other by bare name, as its script runs them
+mypy_path = ["src", "plugins/recipe_calc"]
 # The macros package is rooted at src/ (mypy_path); tools/ and tests/ are
 # namespace packages rooted at the repo, so each file has one module name.
 explicit_package_bases = true

@@ -8,6 +8,8 @@ version = "0.1.0"
 description = "Minecraft recipe calculator."
 requires-python = ">=3.12"
 dependencies = [
+    # The window. Essentials holds QtWidgets without the large Addons.
+    "PySide6-Essentials>=6.11,<6.12",
     # Renders item and block icons. The app falls back to flat textures
     # without it, but the rendered icons are the normal experience.
     "pillow>=11,<12",
