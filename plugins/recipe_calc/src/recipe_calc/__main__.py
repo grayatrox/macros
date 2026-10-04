@@ -8,20 +8,20 @@ import PySide6 before that has run: a bare Python does not have it (#677).
 from __future__ import annotations
 
 import ctypes
+from pathlib import Path
 
 from pluginhost.bootstrap import BootstrapError, ensure_dependencies
 
 APP_NAME = "Recipe Calc"
 MB_ICONERROR = 0x10
-#: Import names the app needs; one per package is enough to detect it. Keep in
-#: step with this plugin's pyproject.toml.
-REQUIRED_MODULES = ("PySide6", "PIL")
+#: plugins/recipe_calc/, whose pyproject.toml declares what the app needs.
+APP_DIR = Path(__file__).resolve().parents[2]
 
 
 def main() -> int:
     """Install any missing dependencies, then run the app. Returns the exit code."""
     try:
-        ensure_dependencies(app_name=APP_NAME, required_modules=REQUIRED_MODULES)
+        ensure_dependencies(app_name=APP_NAME, app_dir=APP_DIR)
     except BootstrapError as exc:
         # Under pythonw there is no console, so report it in a native dialog.
         ctypes.windll.user32.MessageBoxW(0, str(exc), f"{APP_NAME} - cannot start", MB_ICONERROR)

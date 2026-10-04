@@ -11,11 +11,14 @@ import importlib
 import sys
 from collections.abc import Sequence
 from importlib.machinery import ModuleSpec
+from pathlib import Path
 from types import ModuleType
 
 import pytest
 
 from pluginhost.bootstrap import BootstrapError
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class _NoPySide6:
@@ -46,11 +49,11 @@ def test_the_entry_point_imports_without_pyside6(entry_without_pyside6: ModuleTy
 def test_a_bare_python_gets_the_first_start_install_under_recipe_calcs_name(
     entry_without_pyside6: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    calls: list[tuple[str, tuple[str, ...]]] = []
+    calls: list[tuple[str, Path]] = []
     shown: list[tuple[str, str]] = []
 
-    def stop(*, app_name: str, required_modules: tuple[str, ...]) -> None:
-        calls.append((app_name, tuple(required_modules)))
+    def stop(*, app_name: str, app_dir: Path) -> None:
+        calls.append((app_name, app_dir))
         raise BootstrapError("no network")
 
     def message_box(_hwnd: int, text: str, title: str, _flags: int) -> int:
@@ -61,7 +64,7 @@ def test_a_bare_python_gets_the_first_start_install_under_recipe_calcs_name(
     monkeypatch.setattr(ctypes.windll.user32, "MessageBoxW", message_box)
 
     assert entry_without_pyside6.main() == 1
-    # Its own modules, not Macros' (#689).
-    assert calls == [("Recipe Calc", ("PySide6", "PIL"))]
+    # Its own pyproject.toml, not Macros' (#689), and no second list beside it (#666).
+    assert calls == [("Recipe Calc", ROOT / "plugins" / "recipe_calc")]
     assert shown == [("Recipe Calc - cannot start", "no network")]
     assert "PySide6" not in sys.modules

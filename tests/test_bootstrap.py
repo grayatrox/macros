@@ -1,7 +1,8 @@
-"""First-start dependency install (OP #643).
+"""First-start dependency install (OP #643, #666).
 
-pip, the import system and the progress window are replaced with in-memory
-fakes; the install folders are real temp directories.
+pip, the installed-package lookup and the progress window are replaced with
+in-memory fakes; the install folders, locks and app pyproject.toml files are
+real temp files.
 """
 
 from __future__ import annotations
@@ -13,7 +14,6 @@ import sys
 import threading
 import tkinter
 from collections.abc import Callable
-from importlib.machinery import ModuleSpec
 from pathlib import Path
 from tkinter import ttk
 from typing import TextIO
@@ -21,7 +21,6 @@ from typing import TextIO
 import pytest
 
 from macros import __main__ as entry
-from macros.__main__ import REQUIRED_MODULES
 from pluginhost import bootstrap
 from pluginhost.bootstrap import (
     MARKER_NAME,
@@ -29,21 +28,48 @@ from pluginhost.bootstrap import (
     Hooks,
     ensure_dependencies,
 )
+from pluginhost.plugin_deps import read_pins
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _app(folder: Path, *requirements: str) -> Path:
+    """An app folder whose pyproject.toml declares ``requirements``."""
+    folder.mkdir(parents=True, exist_ok=True)
+    listed = ", ".join(f"'{r}'" for r in requirements)
+    (folder / "pyproject.toml").write_text(
+        f"[project]\nname = 'app'\ndependencies = [{listed}]\n", encoding="utf-8"
+    )
+    return folder
+
+
+def _default_app(lock: Path) -> Path:
+    """The app the ``lock`` fixture declares, kept out of the folder the install goes in.
+
+    A sibling of the test's tmp_path rather than a child, so the tests that list
+    the install folder's neighbours see only what the install left there.
+    """
+    return lock.parent.with_name(lock.parent.name + "-app")
 
 
 class World:
-    """Which modules import, and what installs and site dirs happened."""
+    """Which locked packages are visible, and what installs and site dirs happened."""
 
     def __init__(self, *, installed: bool = False) -> None:
-        self.importable: set[str] = set(REQUIRED_MODULES) if installed else set()
+        self.installed = installed  # every package the lock pins is visible at its pin
+        self.visible: set[str] = set()  # ...or only these, by normalised name
+        self.lock: Path | None = None
         self.installs: list[tuple[Path, Path]] = []
         self.site_dirs: list[str] = []
         self.install_fails = False
         self.install_provides = True
         self.windows: list[tuple[str, str]] = []  # (title, message) of each progress window
 
-    def find_spec(self, name: str) -> ModuleSpec | None:
-        return ModuleSpec(name, None) if name in self.importable else None
+    def version_of(self, name: str) -> str | None:
+        assert self.lock is not None, "hooks() records the lock"
+        if not self.installed and name not in self.visible:
+            return None
+        return read_pins(self.lock).get(name)
 
     def install(self, lock: Path, target: Path) -> None:
         if self.install_fails:
@@ -55,21 +81,40 @@ class World:
     def add_site_dir(self, path: str) -> None:
         self.site_dirs.append(path)
         if self.install_provides:
-            self.importable.update(REQUIRED_MODULES)
+            self.installed = True
 
-    def run(self, lock: Path, target: Path, *, app_name: str = "send_to_window") -> None:
-        hooks = Hooks(
-            install=self.install,
-            progress=self.progress,
+    def hooks(
+        self,
+        lock: Path,
+        *,
+        install: bootstrap.Installer | None = None,
+        progress: bootstrap.Progress | None = None,
+        install_wait: float = bootstrap.INSTALL_WAIT_SECONDS,
+    ) -> Hooks:
+        self.lock = lock
+        return Hooks(
+            install=install or self.install,
+            progress=progress or self.progress,
             add_site_dir=self.add_site_dir,
-            find_spec=self.find_spec,
+            version_of=self.version_of,
+            install_wait=install_wait,
         )
+
+    def run(
+        self,
+        lock: Path,
+        target: Path,
+        *,
+        app_dir: Path | None = None,
+        app_name: str = "send_to_window",
+    ) -> None:
+        """First start of the app in ``app_dir`` (default: the ``lock`` fixture's app)."""
         ensure_dependencies(
             app_name=app_name,
-            required_modules=REQUIRED_MODULES,
+            app_dir=app_dir or _default_app(lock),
             lock=lock,
             target=target,
-            hooks=hooks,
+            hooks=self.hooks(lock),
         )
 
     def progress(self, title: str, message: str, work: Callable[[], None]) -> None:
@@ -83,7 +128,9 @@ def _no_window(_title: str, _message: str, work: Callable[[], None]) -> None:
 
 @pytest.fixture
 def lock(tmp_path: Path) -> Path:
+    """The lock, and the app World.run starts by default: one needing pystray."""
     path = tmp_path / "requirements.lock"
+    _app(_default_app(path), "pystray>=0.19")
     path.write_text("pystray==0.19.5 --hash=sha256:aaaa\n", encoding="utf-8")
     return path
 
@@ -105,43 +152,31 @@ def test_nothing_happens_when_dependencies_already_import(lock: Path, target: Pa
     assert not target.exists()
 
 
-def test_only_the_modules_the_caller_names_are_checked(lock: Path, target: Path) -> None:
+def test_only_what_the_apps_pyproject_declares_is_checked(tmp_path: Path, target: Path) -> None:
+    lock = tmp_path / "requirements.lock"
+    lock.write_text(
+        "pyside6-essentials==6.11.0 --hash=sha256:aaaa\npystray==0.19.5 --hash=sha256:bbbb\n",
+        encoding="utf-8",
+    )
     world = World()
-    world.importable.add("PySide6")
-    hooks = Hooks(
-        install=world.install,
-        progress=world.progress,
-        add_site_dir=world.add_site_dir,
-        find_spec=world.find_spec,
-    )
-    ensure_dependencies(
-        app_name="Python File Launcher",
-        required_modules=("PySide6",),
-        lock=lock,
-        target=target,
-        hooks=hooks,
-    )
-    assert world.installs == []  # Macros' other modules are none of the launcher's business
+    world.visible.add("pyside6-essentials")
+    world.run(lock, target, app_dir=_app(tmp_path / "launcher", "PySide6-Essentials>=6.11"))
+    assert world.installs == []  # Macros' other packages are none of the launcher's business
 
 
-def test_a_module_the_caller_names_triggers_the_install(lock: Path, target: Path) -> None:
+def test_a_package_the_app_declares_triggers_the_install(tmp_path: Path, target: Path) -> None:
+    lock = tmp_path / "requirements.lock"
+    lock.write_text(
+        "pyside6-essentials==6.11.0 --hash=sha256:aaaa\npillow==11.3.0 --hash=sha256:bbbb\n",
+        encoding="utf-8",
+    )
     world = World()
-    world.importable.add("PySide6")
+    world.visible.add("pyside6-essentials")
     world.install_provides = False
-    hooks = Hooks(
-        install=world.install,
-        progress=world.progress,
-        add_site_dir=world.add_site_dir,
-        find_spec=world.find_spec,
-    )
-    with pytest.raises(BootstrapError, match="  PIL"):
-        ensure_dependencies(
-            app_name="Recipe Calc",
-            required_modules=("PySide6", "PIL"),
-            lock=lock,
-            target=target,
-            hooks=hooks,
-        )
+    app = _app(tmp_path / "recipe_calc", "PySide6-Essentials>=6.11", "pillow>=11")
+    with pytest.raises(BootstrapError, match=r"  pillow==11\.3\.0") as caught:
+        world.run(lock, target, app_dir=app, app_name="Recipe Calc")
+    assert "pyside6" not in str(caught.value)
     assert len(world.installs) == 1
 
 
@@ -271,6 +306,126 @@ def test_still_missing_after_install_is_reported(lock: Path, target: Path) -> No
     assert "pystray" in str(caught.value)
 
 
+# ── the app's pyproject.toml is the only list (#666) ─────────────────────────
+
+
+def test_a_dependency_added_to_the_pyproject_and_lock_is_required_with_no_other_edit(
+    tmp_path: Path, target: Path
+) -> None:
+    app = _app(tmp_path / "app", "pystray>=0.19")
+    lock = tmp_path / "requirements.lock"
+    lock.write_text("pystray==0.19.5 --hash=sha256:aaaa\n", encoding="utf-8")
+    world = World()
+    world.visible.add("pystray")
+    world.run(lock, target, app_dir=app)
+    assert world.installs == []
+
+    _app(app, "pystray>=0.19", "keyboard>=0.13")  # the only two edits: pyproject...
+    with lock.open("a", encoding="utf-8") as text:  # ...and the lock
+        text.write("keyboard==0.13.5 --hash=sha256:bbbb\n")
+    world.install_provides = False
+    with pytest.raises(BootstrapError, match="still missing") as caught:
+        world.run(lock, target, app_dir=app)
+    assert "keyboard==0.13.5" in str(caught.value)
+    assert len(world.installs) == 1
+
+
+def test_a_dependency_whose_marker_excludes_this_machine_is_neither_required_nor_installed(
+    tmp_path: Path, target: Path
+) -> None:
+    lock = tmp_path / "requirements.lock"
+    lock.write_text("pystray==0.19.5 --hash=sha256:aaaa\n", encoding="utf-8")
+    # Not visible and not even pinned: either would fail the start if it were checked.
+    app = _app(tmp_path / "app", "pystray>=0.19", 'pyobjc>=10; sys_platform == "no-such-os"')
+    world = World()
+    world.visible.add("pystray")
+    world.run(lock, target, app_dir=app)
+    assert world.installs == []
+    assert world.site_dirs == []
+
+
+def test_a_dependency_the_lock_does_not_pin_is_named_and_never_installed(
+    tmp_path: Path, target: Path
+) -> None:
+    lock = tmp_path / "requirements.lock"
+    lock.write_text("pystray==0.19.5 --hash=sha256:aaaa\n", encoding="utf-8")
+    app = _app(tmp_path / "app", "pystray>=0.19", "requests>=2")
+    world = World()
+    with pytest.raises(BootstrapError, match="does not pin") as caught:
+        world.run(lock, target, app_dir=app, app_name="Recipe Calc")
+    message = str(caught.value)
+    assert "requests>=2" in message
+    assert "Recipe Calc" in message
+    assert "tools/lock.py" in message
+    assert world.installs == []
+    assert not target.exists()
+
+
+def test_a_malformed_pyproject_is_reported(tmp_path: Path, lock: Path, target: Path) -> None:
+    app = tmp_path / "broken"
+    app.mkdir()
+    (app / "pyproject.toml").write_text("[project\n", encoding="utf-8")
+    with pytest.raises(BootstrapError, match="not valid TOML"):
+        World().run(lock, target, app_dir=app)
+
+
+def _dist_info(site: Path, name: str, version: str, module: str) -> None:
+    """An installed distribution ``name`` whose import name is ``module``."""
+    info = site / f"{name}-{version}.dist-info"
+    info.mkdir(parents=True)
+    (info / "METADATA").write_text(
+        f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n", encoding="utf-8"
+    )
+    (site / module).mkdir()
+    (site / module / "__init__.py").write_text("", encoding="utf-8")
+
+
+def _real_lookup_hooks(world: World) -> Hooks:
+    """World's fakes, but versions looked up in real package metadata on sys.path."""
+    return Hooks(install=world.install, progress=_no_window, add_site_dir=world.add_site_dir)
+
+
+def test_a_package_is_found_by_its_distribution_name_not_its_import_name(
+    tmp_path: Path, target: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Pillow imports as PIL. A version no real install has, so only the fake counts.
+    site = tmp_path / "site"
+    _dist_info(site, "Pillow", "99.0.1", module="PIL")
+    monkeypatch.syspath_prepend(str(site))
+    lock = tmp_path / "requirements.lock"
+    lock.write_text("pillow==99.0.1 --hash=sha256:aaaa\n", encoding="utf-8")
+    world = World()
+    ensure_dependencies(
+        app_name="Recipe Calc",
+        app_dir=_app(tmp_path / "app", "Pillow>=11"),
+        lock=lock,
+        target=target,
+        hooks=_real_lookup_hooks(world),
+    )
+    assert world.installs == []
+
+
+def test_a_package_at_another_version_than_the_lock_pins_is_missing(
+    tmp_path: Path, target: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    site = tmp_path / "site"
+    _dist_info(site, "Pillow", "99.0.0", module="PIL")  # PIL imports, but not the pinned one
+    monkeypatch.syspath_prepend(str(site))
+    lock = tmp_path / "requirements.lock"
+    lock.write_text("pillow==99.0.1 --hash=sha256:aaaa\n", encoding="utf-8")
+    world = World()
+    with pytest.raises(BootstrapError, match="still missing") as caught:
+        ensure_dependencies(
+            app_name="Recipe Calc",
+            app_dir=_app(tmp_path / "app", "Pillow>=11"),
+            lock=lock,
+            target=target,
+            hooks=_real_lookup_hooks(world),
+        )
+    assert "pillow==99.0.1" in str(caught.value)
+    assert len(world.installs) == 1
+
+
 def test_deps_dir_is_per_user_and_per_python_version(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -323,19 +478,13 @@ def test_pip_failure_reaches_the_user_with_pips_reason(
         subprocess, "run", FakePip(fail_with="ERROR: No matching distribution found for x")
     )
     world = World()
-    hooks = Hooks(
-        install=bootstrap.pip_install,
-        progress=_no_window,
-        add_site_dir=world.add_site_dir,
-        find_spec=world.find_spec,
-    )
     with pytest.raises(BootstrapError, match="No matching distribution found for x"):
         ensure_dependencies(
             app_name="send_to_window",
-            required_modules=REQUIRED_MODULES,
+            app_dir=_default_app(lock),
             lock=lock,
             target=target,
-            hooks=hooks,
+            hooks=world.hooks(lock, install=bootstrap.pip_install, progress=_no_window),
         )
 
 
@@ -407,18 +556,12 @@ def _install_lock(lock: Path, target: Path, install: bootstrap.Installer) -> Non
 
 def _first_start(lock: Path, target: Path, install: bootstrap.Installer) -> None:
     world = World()  # its own interpreter: nothing imports until the folder is added
-    hooks = Hooks(
-        install=install,
-        progress=_no_window,
-        add_site_dir=world.add_site_dir,
-        find_spec=world.find_spec,
-    )
     ensure_dependencies(
         app_name="send_to_window",
-        required_modules=REQUIRED_MODULES,
+        app_dir=_default_app(lock),
         lock=lock,
         target=target,
-        hooks=hooks,
+        hooks=world.hooks(lock, install=install, progress=_no_window),
     )
 
 
@@ -463,16 +606,10 @@ def _first_start_waiting(lock: Path, target: Path, wait: float) -> None:
     world = World()
     ensure_dependencies(
         app_name="send_to_window",
-        required_modules=REQUIRED_MODULES,
+        app_dir=_default_app(lock),
         lock=lock,
         target=target,
-        hooks=Hooks(
-            install=world.install,
-            progress=_no_window,
-            add_site_dir=world.add_site_dir,
-            find_spec=world.find_spec,
-            install_wait=wait,
-        ),
+        hooks=world.hooks(lock, progress=_no_window, install_wait=wait),
     )
 
 
@@ -575,16 +712,14 @@ def test_with_progress_window_titles_the_window_as_given(monkeypatch: pytest.Mon
 def test_macros_starts_its_first_start_under_its_own_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    names: list[str] = []
-    modules: list[str] = []
+    calls: list[tuple[str, Path]] = []
 
-    def stop(*, app_name: str, required_modules: tuple[str, ...]) -> None:
-        names.append(app_name)
-        modules.extend(required_modules)
+    def stop(*, app_name: str, app_dir: Path) -> None:
+        calls.append((app_name, app_dir))
         raise BootstrapError("stop before the app runs")
 
     monkeypatch.setattr(entry, "ensure_dependencies", stop)
     monkeypatch.setattr(ctypes.windll.user32, "MessageBoxW", lambda *_args: 0)
     assert entry.main() == 1
-    assert names == ["send_to_window"]
-    assert modules == list(REQUIRED_MODULES)
+    # Its own pyproject.toml is the list it checks: no second list beside it (#666).
+    assert calls == [("send_to_window", ROOT / "plugins" / "macros")]

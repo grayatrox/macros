@@ -106,10 +106,14 @@ imports PySide6, so it also starts on a bare Python (#677).
   root `requirements.lock`. That is the host's contract, not an accident of
   layout. Making a plugin installable outside this repository is a separate
   change.
-- Each app passes the modules its first start checks to
-  `pluginhost.bootstrap.ensure_dependencies(required_modules=...)` (#689), so
-  the host no longer lists any plugin's imports. The lists are still kept by
-  hand, beside each app's entry point, in step with its pyproject.toml.
+- Each app passes its own folder to
+  `pluginhost.bootstrap.ensure_dependencies(app_dir=...)`, so the host lists no
+  plugin's needs (#689). Since #666 the first start reads them from that
+  folder's `pyproject.toml` and checks installed versions against
+  `requirements.lock` with `pluginhost.plugin_deps`, as the launcher does when
+  it finds the app. No second, hand-kept list of import names remains: adding a
+  dependency to the pyproject and the lock is enough. The launcher passes the
+  repository root, whose `pyproject.toml` declares only its own needs.
 - The install folder is still `%LOCALAPPDATA%\Macros\deps-pyXY`, unchanged
   here. Renaming it would reinstall everything.
 - Existing checkouts must move their git-ignored `settings.json` and

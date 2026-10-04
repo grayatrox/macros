@@ -7,29 +7,19 @@ Dependencies are installed first if this is the first start; see
 from __future__ import annotations
 
 import ctypes
+from pathlib import Path
 
 from pluginhost.bootstrap import BootstrapError, ensure_dependencies
 
 MB_ICONERROR = 0x10
-#: Import names the app needs; one per package is enough to detect it. Keep in
-#: step with this plugin's pyproject.toml.
-REQUIRED_MODULES = (
-    "keyboard",
-    "psutil",
-    "pyautogui",
-    "pystray",
-    "win32clipboard",
-    "win32gui",
-    "win32process",
-    "PIL",
-    "PySide6",  # the log window
-)
+#: plugins/macros/, whose pyproject.toml declares what the app needs.
+APP_DIR = Path(__file__).resolve().parents[2]
 
 
 def main() -> int:
     """Install any missing dependencies, then run the app. Returns the exit code."""
     try:
-        ensure_dependencies(app_name="send_to_window", required_modules=REQUIRED_MODULES)
+        ensure_dependencies(app_name="send_to_window", app_dir=APP_DIR)
     except BootstrapError as exc:
         # Under pythonw there is no console, so report it in a native dialog.
         ctypes.windll.user32.MessageBoxW(0, str(exc), "send_to_window - cannot start", MB_ICONERROR)

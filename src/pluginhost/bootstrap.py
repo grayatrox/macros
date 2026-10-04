@@ -2,7 +2,9 @@
 
 The app needs third-party packages (pystray, pywin32, ...) that a bare Python
 does not have. Rather than make the user run pip, :func:`ensure_dependencies`
-installs them the first time the app starts, into a private folder:
+installs them the first time the app starts, into a private folder. What the
+app needs is read from its own ``pyproject.toml`` and checked against the lock
+by :mod:`pluginhost.plugin_deps`, as launcher.pyw checks it (#666):
 
 * **Only from hash-pinned locks** (``requirements.lock``) with
   ``--require-hashes``: a download that does not match a digest committed to
@@ -33,18 +35,16 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import importlib
-import importlib.util
 import os
 import shutil
 import site
 import subprocess
 import sys
 import threading
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from ctypes import wintypes
 from dataclasses import dataclass
-from importlib.machinery import ModuleSpec
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -52,7 +52,8 @@ LOCK_FILE = ROOT / "requirements.lock"
 BUILD_LOCK_FILE = ROOT / "requirements-build.lock"
 MARKER_NAME = "requirements.lock.sha256"
 
-FindSpec = Callable[[str], ModuleSpec | None]
+#: The version of a distribution (by normalised name) that would be imported, or None.
+VersionOf = Callable[[str], str | None]
 Installer = Callable[[Path, Path], None]
 Progress = Callable[[str, str, Callable[[], None]], None]  # (title, message, work)
 AddSiteDir = Callable[[str], None]
@@ -73,13 +74,6 @@ def deps_dir() -> Path:
     base = Path(local) if local else Path.home() / "AppData" / "Local"
     # Named for Macros, which had the first install; renaming it would reinstall everything.
     return base / "Macros" / f"deps-py{sys.version_info.major}{sys.version_info.minor}"
-
-
-def missing_modules(
-    required_modules: Sequence[str], find_spec: FindSpec = importlib.util.find_spec
-) -> list[str]:
-    """Which of ``required_modules`` cannot be imported right now."""
-    return [name for name in required_modules if find_spec(name) is None]
 
 
 def _pip(args: list[str], env: dict[str, str] | None = None) -> None:
@@ -346,15 +340,45 @@ class Hooks:
     install: Installer = pip_install
     progress: Progress = with_progress_window
     add_site_dir: AddSiteDir = site.addsitedir
-    find_spec: FindSpec = importlib.util.find_spec
+    # None: look the version up on sys.path as it is at the time of each check.
+    version_of: VersionOf | None = None
     # Seconds to wait for another app's install into the same folder.
     install_wait: float = INSTALL_WAIT_SECONDS
+
+
+def _unmet(app_name: str, app_dir: Path, lock: Path, version_of: VersionOf | None) -> list[str]:
+    """The ``name==version`` pins ``app_dir``'s pyproject.toml needs but would not get.
+
+    Raises:
+        BootstrapError: the pyproject or the lock is unusable, or the app
+            needs something the lock does not pin (never installed loosely).
+    """
+    # plugin_deps imports this module, so importing it at the top would be circular.
+    from pluginhost import plugin_deps  # noqa: PLC0415 - see above
+
+    importlib.invalidate_caches()  # an install since the last check must be seen
+    try:
+        status = plugin_deps.check(
+            plugin_deps.read_requirements(app_dir),
+            plugin_deps.read_pins(lock),
+            version_of or plugin_deps.version_on(sys.path),
+        )
+    except plugin_deps.PluginDepsError as exc:
+        raise BootstrapError(f"{app_name}'s dependencies could not be checked:\n\n{exc}") from exc
+    if status.unpinned:
+        raise BootstrapError(
+            f"{app_name} needs components that {lock.name} does not pin, so they "
+            "cannot be installed:\n\n  "
+            + "\n  ".join(status.unpinned)
+            + "\n\nRegenerate the lock with: python tools/lock.py"
+        )
+    return status.missing
 
 
 def ensure_dependencies(
     *,
     app_name: str,
-    required_modules: Sequence[str],
+    app_dir: Path,
     lock: Path = LOCK_FILE,
     target: Path | None = None,
     hooks: Hooks | None = None,
@@ -364,17 +388,20 @@ def ensure_dependencies(
     Does nothing when they are already importable (e.g. a developer's venv).
     ``app_name`` is the display name of the app that is starting; the progress
     window is titled after it. Required, because several apps share this
-    install and a default would name the wrong one. ``required_modules`` are
-    the import names the app needs, one per package is enough to detect it;
-    required for the same reason: the host cannot know what each app imports.
+    install and a default would name the wrong one. ``app_dir`` is the folder
+    whose ``pyproject.toml`` declares what the app needs
+    (``[project].dependencies``); required for the same reason. A dependency
+    counts as present only at the exact version ``lock`` pins, and one whose
+    environment marker does not match this machine is not needed at all.
 
     Raises:
-        BootstrapError: the lock is missing, the install failed, another
-            app's install did not finish within ``hooks.install_wait``, or
-            modules are still missing afterwards.
+        BootstrapError: the lock or the app's pyproject.toml is unusable, the
+            app needs something the lock does not pin, the install failed,
+            another app's install did not finish within
+            ``hooks.install_wait``, or dependencies are still missing afterwards.
     """
     hooks = hooks or Hooks()
-    if not missing_modules(required_modules, hooks.find_spec):
+    if not _unmet(app_name, app_dir, lock, hooks.version_of):
         return
 
     target = target or deps_dir()
@@ -394,8 +421,7 @@ def ensure_dependencies(
             raise _install_failed(exc, "start the app again") from exc
 
     hooks.add_site_dir(str(target))
-    importlib.invalidate_caches()
-    if still_missing := missing_modules(required_modules, hooks.find_spec):
+    if still_missing := _unmet(app_name, app_dir, lock, hooks.version_of):
         raise BootstrapError(
             "These components are still missing after installation:\n\n  "
             + "\n  ".join(still_missing)

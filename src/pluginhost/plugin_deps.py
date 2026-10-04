@@ -44,6 +44,7 @@ from pluginhost.bootstrap import (
     LOCK_FILE,
     BootstrapError,
     Installer,
+    VersionOf,
     deps_dir,
     install_lock,
     is_current,
@@ -51,9 +52,6 @@ from pluginhost.bootstrap import (
 )
 
 PYPROJECT_NAME = "pyproject.toml"
-
-#: The version of a distribution (by normalised name) that an app would import, or None.
-VersionOf = Callable[[str], str | None]
 
 
 class PluginDepsError(Exception):
