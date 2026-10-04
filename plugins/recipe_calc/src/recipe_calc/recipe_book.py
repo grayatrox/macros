@@ -11,12 +11,15 @@ A jar is anything with ``namelist()`` and ``read(name)`` (see ``Archive``), so a
 from __future__ import annotations
 
 import json
+import logging
 import math
 import zipfile
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol
+
+log = logging.getLogger(__name__)
 
 # Recipe/tag folders were renamed in 1.21 (recipes -> recipe, tags/items -> tags/item)
 RECIPE_DIRS = ("data/minecraft/recipe/", "data/minecraft/recipes/")
@@ -713,14 +716,30 @@ def find_minecraft_jars(
     appdata: Path, has_recipes: Callable[[Path], bool] = jar_has_recipes
 ) -> list[JarCandidate]:
     """Every Minecraft client jar with recipe data under ``appdata``
-    (``%APPDATA%``), default launcher first."""
+    (``%APPDATA%``), default launcher first.
+
+    A versions folder that cannot be read is logged and skipped so the other
+    launchers' jars are still found. Raises the first such ``OSError`` only when
+    no folder could be scanned at all."""
     found: list[JarCandidate] = []
     seen: set[Path] = set()
+    failures: list[OSError] = []
+    scanned = 0
 
     def scan_versions_dir(versions_dir: Path, source: str) -> None:
+        try:
+            scan_readable_versions_dir(versions_dir, source)
+        except OSError as e:
+            log.warning("Skipping unreadable versions folder %s: %s", versions_dir, e)
+            failures.append(e)
+
+    def scan_readable_versions_dir(versions_dir: Path, source: str) -> None:
+        nonlocal scanned
         if not versions_dir.exists():
             return
-        for folder in sorted(versions_dir.iterdir(), reverse=True):
+        folders = sorted(versions_dir.iterdir(), reverse=True)
+        scanned += 1
+        for folder in folders:
             if not folder.is_dir():
                 continue
             jar = folder / f"{folder.name}.jar"
@@ -737,12 +756,22 @@ def find_minecraft_jars(
     scan_versions_dir(appdata / ".minecraft" / "versions", ".minecraft (default)")
     scan_versions_dir(appdata / "ModrinthApp" / "meta" / "versions", "Modrinth App")
     for base in (appdata / "Modrinth" / "profiles", appdata / "Modrinth" / "instances"):
-        if base.exists():
-            for profile in base.iterdir():
-                if profile.is_dir():
-                    source = f"Modrinth ({profile.name})"
-                    scan_versions_dir(profile / ".minecraft" / "versions", source)
-                    scan_versions_dir(profile / "versions", source)
+        try:
+            if not base.exists():
+                continue
+            profiles = list(base.iterdir())
+        except OSError as e:
+            log.warning("Skipping unreadable profiles folder %s: %s", base, e)
+            failures.append(e)
+            continue
+        scanned += 1
+        for profile in profiles:
+            if profile.is_dir():
+                source = f"Modrinth ({profile.name})"
+                scan_versions_dir(profile / ".minecraft" / "versions", source)
+                scan_versions_dir(profile / "versions", source)
+    if failures and not scanned:
+        raise failures[0]
     return found
 
 

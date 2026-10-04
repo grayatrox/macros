@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import zipfile
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -650,6 +652,47 @@ def test_find_jars_skips_jars_without_recipes(tmp_path: Path) -> None:
 
 def test_find_jars_with_no_launchers_installed(tmp_path: Path) -> None:
     assert find_minecraft_jars(tmp_path) == []
+
+
+def _deny_listing(monkeypatch: pytest.MonkeyPatch, *denied: Path) -> None:
+    """Make listing the given folders raise PermissionError, as a protected folder does."""
+    real_iterdir = Path.iterdir
+
+    def iterdir(self: Path) -> Iterator[Path]:
+        if self in denied:
+            raise PermissionError(13, "Access is denied", str(self))
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+
+
+def test_find_jars_skips_an_unreadable_folder_and_logs_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    blocked = tmp_path / ".minecraft" / "versions"
+    _jar(blocked / "1.21.4" / "1.21.4.jar")
+    readable = _jar(tmp_path / "ModrinthApp" / "meta" / "versions" / "1.21" / "1.21.jar")
+    _deny_listing(monkeypatch, blocked)
+
+    with caplog.at_level(logging.WARNING):
+        found = find_minecraft_jars(tmp_path, has_recipes=lambda _jar: True)
+
+    assert found == [JarCandidate(readable, "1.21", "Modrinth App")]
+    assert str(blocked) in caplog.text
+    assert "Access is denied" in caplog.text
+
+
+def test_find_jars_raises_when_every_folder_is_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    default = tmp_path / ".minecraft" / "versions"
+    modrinth_app = tmp_path / "ModrinthApp" / "meta" / "versions"
+    _jar(default / "1.21.4" / "1.21.4.jar")
+    _jar(modrinth_app / "1.21" / "1.21.jar")
+    _deny_listing(monkeypatch, default, modrinth_app)
+
+    with pytest.raises(PermissionError):
+        find_minecraft_jars(tmp_path, has_recipes=lambda _jar: True)
 
 
 def test_jar_has_recipes_reads_the_zip(tmp_path: Path) -> None:
