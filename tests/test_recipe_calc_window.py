@@ -276,6 +276,28 @@ def test_a_jar_deleted_before_loading_is_reported(
     assert not window.loading
 
 
+def test_a_permission_error_while_scanning_for_jars_is_reported(
+    qapp: QtWidgets.QApplication, tmp_path: Path, errors: list[str]
+) -> None:
+    def locked() -> list[JarCandidate]:
+        raise PermissionError("[WinError 5] Access is denied: 'versions'")
+
+    window = RecipeCalculator(config_path=tmp_path / "config.json", find_jars=locked)
+    try:
+        wait_for(lambda: bool(errors))
+        assert errors[0].startswith("Could not scan for Minecraft jars: ")
+        assert "Access is denied" in errors[0]
+        assert (
+            window.status_label.text()
+            == "No jar detected. Please use Browse to select it manually."
+        )
+        assert window.jar_path_entry.text() == "(No jar found - use Browse button)"
+        assert window.browse_button.isEnabled()
+    finally:
+        window.close()
+        window.deleteLater()
+
+
 # ── Window geometry ──────────────────────────────────────────────────────────
 
 

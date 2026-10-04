@@ -613,7 +613,7 @@ def default_find_jars() -> list[JarCandidate]:
 
 class RecipeCalculator(QtWidgets.QWidget):
     # Background results carried back to the GUI thread
-    jars_detected = QtCore.Signal(object)  # list[JarCandidate]
+    jars_detected = QtCore.Signal(object)  # list[JarCandidate], or the error message
     recipes_loaded = QtCore.Signal(object)  # RecipeBook, or the error message
 
     def __init__(
@@ -643,7 +643,19 @@ class RecipeCalculator(QtWidgets.QWidget):
         self.recipes_loaded.connect(self.on_recipes_loaded)
         self.setup_ui()
 
-        threading.Thread(target=lambda: self.jars_detected.emit(find_jars()), daemon=True).start()
+        threading.Thread(target=self.scan_worker, args=(find_jars,), daemon=True).start()
+
+    def scan_worker(self, find_jars: Callable[[], list[JarCandidate]]) -> None:
+        """Run on a worker thread: look for installed jars, or say why that failed."""
+        try:
+            found = find_jars()
+        except OSError as e:
+            # A locked jar or protected folder (PermissionError) must not leave the
+            # GUI waiting on a thread that died silently.
+            log.exception("Failed to scan for Minecraft jars")
+            self.jars_detected.emit(f"Could not scan for Minecraft jars: {e}")
+        else:
+            self.jars_detected.emit(found)
 
     # --- UI ------------------------------------------------------------------
 
@@ -766,6 +778,8 @@ class RecipeCalculator(QtWidgets.QWidget):
     def on_jars_detected(self, found: object) -> None:
         """Called with every jar found; offers a choice when there are several.
         The jar remembered from the last session sorts to the top."""
+        if isinstance(found, str):  # the scan failed; found is the reason
+            show_error(self, "Error", found)
         saved = self.config.get("jar")
         candidates = prefer_saved(
             [c for c in found if isinstance(c, JarCandidate)] if isinstance(found, list) else [],
